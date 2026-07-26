@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>CodeAgent</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- TOP BAR -->
+    <header class="topbar">
+      <button id="menuBtn" class="icon-btn" aria-label="Projects">☰</button>
+      <div class="topbar-title">
+        <span id="projectName">No Project</span>
+        <span id="projectSub" class="sub">tap ☰ to switch</span>
+      </div>
+      <button id="filesBtn" class="icon-btn" aria-label="Files">📁</button>
+    </header>
+
+    <!-- PROJECT DRAWER -->
+    <div id="drawerOverlay" class="drawer-overlay hidden"></div>
+    <aside id="drawer" class="drawer hidden">
+      <div class="drawer-header">
+        <h3>Projects</h3>
+        <button id="newProjectBtn" class="btn-small">+ New</button>
+      </div>
+      <div id="projectList" class="project-list"></div>
+    </aside>
+
+    <!-- FILES PANEL -->
+    <div id="filesOverlay" class="drawer-overlay hidden"></div>
+    <aside id="filesPanel" class="drawer files-panel hidden">
+      <div class="drawer-header">
+        <h3>Files</h3>
+        <div class="file-actions">
+          <button id="downloadZipBtn" class="btn-small">⬇ Zip</button>
+        </div>
+      </div>
+      <div id="fileList" class="file-list"></div>
+      <div id="previewWrap" class="preview-wrap hidden">
+        <div class="preview-header">
+          <span>Live Preview</span>
+          <button id="closePreviewBtn" class="btn-small">✕</button>
+        </div>
+        <iframe id="previewFrame" sandbox="allow-scripts"></iframe>
+      </div>
+    </aside>
+
+    <!-- CHAT AREA -->
+    <main id="chatArea" class="chat-area">
+      <div id="chatLog" class="chat-log">
+        <div class="empty-state" id="emptyState">
+          <p>👋 Chat mein bolo:</p>
+          <p class="hint">"React component bana do" / "is file mein bug fix karo" / "naya project banao"</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- INPUT BAR -->
+    <footer class="input-bar">
+      <textarea id="chatInput" placeholder="Message... (Hinglish chalega)" rows="1"></textarea>
+      <button id="sendBtn" class="send-btn" aria-label="Send">➤</button>
+    </footer>
+
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
