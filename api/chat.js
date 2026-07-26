@@ -6,9 +6,11 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 // Free-tier models to try in order (first is primary, rest are fallback on failure/rate-limit)
 const MODEL_CHAIN = [
-  "nvidia/nemotron-nano-9b-v2:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "google/gemini-2.0-flash-exp:free",
+  "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
+  "poolside/laguna-xs-2.1:free",
+  "cohere/north-mini-code:free",
+  "inclusionai/ling-3.0-flash:free",
 ];
 
 const SYSTEM_PROMPT = `You are an agentic coding assistant embedded in a mobile web app. The user works ONLY from their phone, in Hinglish (Hindi+English mix) or English — understand both.
