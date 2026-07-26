@@ -1,0 +1,9 @@
+{
+  "name": "codeagent",
+  "version": "1.0.0",
+  "description": "Mobile-first agentic coding assistant — chat, generate files, live preview. Vercel serverless + OpenRouter free-tier.",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}
