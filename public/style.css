@@ -59,6 +59,13 @@ html, body {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.55);
   z-index: 20;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.drawer-overlay.show {
+  opacity: 1;
+  pointer-events: auto;
 }
 .drawer {
   position: fixed; top: 0; left: 0; bottom: 0;
@@ -68,14 +75,23 @@ html, body {
   z-index: 21;
   display: flex; flex-direction: column;
   padding-top: env(safe-area-inset-top, 0px);
+  transform: translateX(-100%);
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform;
+}
+.drawer.show {
   transform: translateX(0);
-  transition: transform 0.2s ease;
 }
 .files-panel {
   left: auto; right: 0;
   border-right: none;
   border-left: 1px solid var(--border);
+  transform: translateX(100%);
 }
+.files-panel.show {
+  transform: translateX(0);
+}
+/* .hidden still used for elements that don't need animation (e.g. display:none after transition) */
 .hidden { display: none !important; }
 
 .drawer-header {
@@ -204,6 +220,118 @@ html, body {
   margin-right: 6px;
   cursor: pointer;
 }
+
+/* CUSTOM MODAL */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.modal-overlay.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+.modal-box {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+  width: 100%;
+  max-width: 340px;
+  transform: scale(0.92) translateY(8px);
+  opacity: 0;
+  transition: transform 0.22s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.22s ease;
+}
+.modal-overlay.show .modal-box {
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.modal-message {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+.modal-input {
+  width: 100%;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+.modal-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.modal-btn {
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  border: none;
+  font-weight: 500;
+}
+.modal-btn-cancel {
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+}
+.modal-btn-ok {
+  background: var(--accent);
+  color: #04140f;
+}
+.modal-btn-ok.danger {
+  background: var(--danger);
+  color: #2a0505;
+}
+
+/* AGENT PROGRESS / STATUS */
+.msg.status {
+  align-self: flex-start;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px;
+}
+.msg.status .status-icon {
+  display: inline-flex;
+  width: 14px; height: 14px;
+  flex-shrink: 0;
+}
+.msg.status.done { color: var(--accent); border-color: var(--accent-dim); }
+.status-spinner {
+  width: 13px; height: 13px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.status-check { color: var(--accent); font-size: 13px; }
 
 /* INPUT BAR */
 .input-bar {
