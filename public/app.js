@@ -48,6 +48,71 @@ function genId() {
   return "p_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+// ---------- CUSTOM MODAL (replaces window.prompt / confirm / alert) ----------
+// showModal({title, message, hasInput, inputValue, okText, cancelText, danger})
+// resolves to: string (input value) | true (confirm ok) | null (cancelled)
+function showModal({ title = "", message = "", hasInput = false, inputValue = "", okText = "OK", cancelText = "Cancel", danger = false, hideCancel = false }) {
+  return new Promise((resolve) => {
+    const overlay = $("modalOverlay");
+    const box = $("modalBox");
+    $("modalTitle").textContent = title;
+    $("modalMessage").textContent = message;
+    $("modalMessage").classList.toggle("hidden", !message);
+
+    const input = $("modalInput");
+    input.classList.toggle("hidden", !hasInput);
+    input.value = inputValue;
+
+    const okBtn = $("modalOkBtn");
+    const cancelBtn = $("modalCancelBtn");
+    okBtn.textContent = okText;
+    cancelBtn.textContent = cancelText;
+    cancelBtn.classList.toggle("hidden", hideCancel);
+    okBtn.classList.toggle("danger", danger);
+
+    overlay.classList.remove("hidden");
+    requestAnimationFrame(() => overlay.classList.add("show"));
+    if (hasInput) setTimeout(() => input.focus(), 260);
+
+    function cleanup(result) {
+      overlay.classList.remove("show");
+      setTimeout(() => overlay.classList.add("hidden"), 220);
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+      overlay.removeEventListener("click", onOverlay);
+      input.removeEventListener("keydown", onKeydown);
+      resolve(result);
+    }
+    function onOk() {
+      cleanup(hasInput ? input.value.trim() : true);
+    }
+    function onCancel() {
+      cleanup(null);
+    }
+    function onOverlay(e) {
+      if (e.target === overlay) onCancel();
+    }
+    function onKeydown(e) {
+      if (e.key === "Enter") onOk();
+    }
+
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+    overlay.addEventListener("click", onOverlay);
+    input.addEventListener("keydown", onKeydown);
+  });
+}
+
+function showAlert(message, title = "") {
+  return showModal({ title, message, hideCancel: true, okText: "OK" });
+}
+function showConfirm(message, title = "") {
+  return showModal({ title, message, okText: "OK", cancelText: "Cancel" });
+}
+function showPrompt(message, defaultValue = "", title = "") {
+  return showModal({ title, message, hasInput: true, inputValue: defaultValue, okText: "OK", cancelText: "Cancel" });
+}
+
 // ---------- PROJECT MANAGEMENT ----------
 function createProject(name) {
   const id = genId();
@@ -117,9 +182,10 @@ function renderProjectList() {
     el.addEventListener("click", () => switchProject(el.dataset.id))
   );
   list.querySelectorAll('[data-action="delete"]').forEach((el) =>
-    el.addEventListener("click", (e) => {
+    el.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (confirm("Delete this project? Cannot be undone.")) deleteProject(el.dataset.id);
+      const ok = await showConfirm("Delete this project? Cannot be undone.", "Delete Project");
+      if (ok) deleteProject(el.dataset.id);
     })
   );
 }
@@ -193,7 +259,7 @@ function downloadFile(path) {
 
 async function downloadZip() {
   const paths = Object.keys(currentFiles);
-  if (!paths.length) return alert("Koi file nahi hai project mein.");
+  if (!paths.length) return showAlert("Koi file nahi hai project mein.", "Zip Download");
   const zip = new JSZip();
   paths.forEach((p) => zip.file(p, currentFiles[p]));
   const blob = await zip.generateAsync({ type: "blob" });
@@ -261,6 +327,50 @@ function hideTyping() {
   $("typingIndicator")?.remove();
 }
 
+// ---------- LIVE STATUS / PROGRESS TRACKING ----------
+// Shows a running status bubble (like "Thinking...", "Creating x.js...") so the user
+// can see the agent is actively working, not stuck.
+let statusEl = null;
+
+function pushStatus(text) {
+  const log = $("chatLog");
+  $("emptyState").classList.add("hidden");
+  statusEl = document.createElement("div");
+  statusEl.className = "msg status";
+  statusEl.innerHTML = `<span class="status-spinner"></span><span class="status-text">${escapeHtml(text)}</span>`;
+  log.appendChild(statusEl);
+  log.scrollTop = log.scrollHeight;
+  return statusEl;
+}
+
+function updateStatus(text, done = false) {
+  if (!statusEl) {
+    pushStatus(text);
+    return;
+  }
+  const textEl = statusEl.querySelector(".status-text");
+  if (textEl) textEl.textContent = text;
+  if (done) {
+    statusEl.classList.add("done");
+    const spinner = statusEl.querySelector(".status-spinner");
+    if (spinner) spinner.outerHTML = `<span class="status-check">✓</span>`;
+  }
+  $("chatLog").scrollTop = $("chatLog").scrollHeight;
+}
+
+function finishStatus(finalText) {
+  if (statusEl) {
+    updateStatus(finalText, true);
+    // freeze this bubble in place (it becomes part of history-visible log, not removed)
+    statusEl = null;
+  }
+}
+
+function clearStatus() {
+  statusEl?.remove();
+  statusEl = null;
+}
+
 // ---------- INTENT ROUTING (local, no LLM cost) ----------
 // Returns a handled=true if it fully handled the message locally.
 function tryLocalIntent(text) {
@@ -268,8 +378,9 @@ function tryLocalIntent(text) {
 
   // naya project banao
   if (/^(naya|new)\s+project/.test(t) || /create\s+(a\s+)?new\s+project/.test(t)) {
-    const name = prompt("Project ka naam?", "My Project");
-    if (name) createProject(name);
+    showPrompt("Project ka naam?", "My Project", "New Project").then((name) => {
+      if (name) createProject(name);
+    });
     return true;
   }
 
@@ -405,7 +516,15 @@ async function sendMessage() {
 
   // 2) otherwise call LLM
   $("sendBtn").disabled = true;
-  showTyping();
+  pushStatus("Samajh raha hoon...");
+
+  // Give the user a sense of progress while we wait for the (single) API response.
+  // These are staged local updates — not fake data, just honest phase labels for a
+  // request that's genuinely in flight.
+  const stageTimers = [];
+  stageTimers.push(setTimeout(() => updateStatus("Model se connect ho raha hai..."), 1200));
+  stageTimers.push(setTimeout(() => updateStatus("Code likh raha hai..."), 3500));
+  stageTimers.push(setTimeout(() => updateStatus("Thoda aur time lag raha hai, rukiye..."), 9000));
 
   try {
     await maybeSummarize();
@@ -419,21 +538,35 @@ async function sendMessage() {
       }),
     });
     const data = await res.json();
-    hideTyping();
+    stageTimers.forEach(clearTimeout);
 
     const replyText = data.reply || "…";
-    const touchedFiles = data.files && data.files.length ? applyFileOps(data.files) : [];
+    const filesToApply = data.files || [];
 
+    if (filesToApply.length) {
+      // Walk through each file so the user sees exactly what's happening, one by one.
+      for (const f of filesToApply) {
+        const verb = f.action === "edit" ? "Editing" : "Creating";
+        updateStatus(`${verb} ${f.path}...`);
+        await sleep(350); // brief pause so each step is actually readable
+        applyFileOps([f]);
+        pushStatus(`${f.action === "edit" ? "Updated" : "Created"} ${f.path}`);
+        updateStatus(`${f.action === "edit" ? "Updated" : "Created"} ${f.path}`, true);
+      }
+      finishStatus("Done ✓");
+      renderFileList();
+      $("projectSub").textContent = `${Object.keys(currentFiles).length} files`;
+    } else {
+      clearStatus();
+    }
+
+    const touchedFiles = filesToApply.map((f) => f.path);
     currentChat.push({ role: "bot", content: replyText, fileChips: touchedFiles });
     saveChat(currentProjectId, currentChat, chatSummary);
     appendMsgToDom("bot", replyText, touchedFiles);
-
-    if (touchedFiles.length) {
-      renderFileList();
-      $("projectSub").textContent = `${Object.keys(currentFiles).length} files`;
-    }
   } catch (e) {
-    hideTyping();
+    stageTimers.forEach(clearTimeout);
+    clearStatus();
     const msg = "⚠️ Connection issue. Phir se try karo.";
     currentChat.push({ role: "bot", content: msg });
     saveChat(currentProjectId, currentChat, chatSummary);
@@ -441,6 +574,10 @@ async function sendMessage() {
   } finally {
     $("sendBtn").disabled = false;
   }
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 // ---------- UI HELPERS ----------
@@ -453,22 +590,46 @@ function escapeAttr(s) {
 
 function openDrawer() {
   renderProjectList();
-  $("drawer").classList.remove("hidden");
-  $("drawerOverlay").classList.remove("hidden");
+  const drawer = $("drawer");
+  const overlay = $("drawerOverlay");
+  drawer.classList.remove("hidden");
+  overlay.classList.remove("hidden");
+  requestAnimationFrame(() => {
+    drawer.classList.add("show");
+    overlay.classList.add("show");
+  });
 }
 function closeDrawer() {
-  $("drawer").classList.add("hidden");
-  $("drawerOverlay").classList.add("hidden");
+  const drawer = $("drawer");
+  const overlay = $("drawerOverlay");
+  drawer.classList.remove("show");
+  overlay.classList.remove("show");
+  setTimeout(() => {
+    drawer.classList.add("hidden");
+    overlay.classList.add("hidden");
+  }, 280);
 }
 function openFilesPanel() {
   renderFileList();
-  $("filesPanel").classList.remove("hidden");
-  $("filesOverlay").classList.remove("hidden");
+  const panel = $("filesPanel");
+  const overlay = $("filesOverlay");
+  panel.classList.remove("hidden");
+  overlay.classList.remove("hidden");
+  requestAnimationFrame(() => {
+    panel.classList.add("show");
+    overlay.classList.add("show");
+  });
 }
 function closeFilesPanel() {
-  $("filesPanel").classList.add("hidden");
-  $("filesOverlay").classList.add("hidden");
-  $("previewWrap").classList.add("hidden");
+  const panel = $("filesPanel");
+  const overlay = $("filesOverlay");
+  panel.classList.remove("show");
+  overlay.classList.remove("show");
+  setTimeout(() => {
+    panel.classList.add("hidden");
+    overlay.classList.add("hidden");
+    $("previewWrap").classList.add("hidden");
+  }, 280);
 }
 
 function autoResize() {
@@ -483,8 +644,8 @@ $("drawerOverlay").addEventListener("click", closeDrawer);
 $("filesBtn").addEventListener("click", openFilesPanel);
 $("filesOverlay").addEventListener("click", closeFilesPanel);
 $("closePreviewBtn").addEventListener("click", () => $("previewWrap").classList.add("hidden"));
-$("newProjectBtn").addEventListener("click", () => {
-  const name = prompt("Project ka naam?", "My Project");
+$("newProjectBtn").addEventListener("click", async () => {
+  const name = await showPrompt("Project ka naam?", "My Project", "New Project");
   if (name) createProject(name);
 });
 $("downloadZipBtn").addEventListener("click", downloadZip);
