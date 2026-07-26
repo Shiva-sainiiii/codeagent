@@ -39,14 +39,21 @@
         </div>
       </div>
       <div id="fileList" class="file-list"></div>
-      <div id="previewWrap" class="preview-wrap hidden">
-        <div class="preview-header">
-          <span>Live Preview</span>
-          <button id="closePreviewBtn" class="btn-small">✕</button>
-        </div>
-        <iframe id="previewFrame" sandbox="allow-scripts"></iframe>
-      </div>
     </aside>
+
+    <!-- FULL-SCREEN LIVE PREVIEW -->
+    <div id="previewModal" class="preview-modal hidden">
+      <div class="preview-modal-header">
+        <span id="previewFileName" class="preview-filename">Live Preview</span>
+        <div class="preview-modal-actions">
+          <button id="previewRefreshBtn" class="icon-btn small" aria-label="Refresh">⟳</button>
+          <button id="closePreviewBtn" class="icon-btn small" aria-label="Close">✕</button>
+        </div>
+      </div>
+      <div class="preview-frame-wrap">
+        <iframe id="previewFrame" sandbox="allow-scripts allow-modals"></iframe>
+      </div>
+    </div>
 
     <!-- CHAT AREA -->
     <main id="chatArea" class="chat-area">
@@ -76,6 +83,9 @@
         </div>
       </div>
     </div>
+
+    <!-- TOAST -->
+    <div id="toast" class="toast hidden"></div>
 
   </div>
 
