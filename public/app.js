@@ -7,7 +7,6 @@ let currentProjectId = localStorage.getItem("codeagent:lastProject") || null;
 let currentFiles = {};      // {path: content}
 let currentChat = [];       // [{role, content}]
 let chatSummary = "";       // rolling summary of older turns
-let selectedFileForPreview = null;
 
 // ---------- LOCALSTORAGE HELPERS ----------
 function listProjects() {
@@ -204,6 +203,7 @@ function renderFileList() {
         <b>${escapeHtml(path)}</b>
         <div class="file-item-actions">
           <button class="mini-btn" data-action="preview" data-path="${escapeAttr(path)}">👁</button>
+          <button class="mini-btn" data-action="copy" data-path="${escapeAttr(path)}">📋</button>
           <button class="mini-btn" data-action="download" data-path="${escapeAttr(path)}">⬇</button>
           <button class="mini-btn danger" data-action="delete" data-path="${escapeAttr(path)}">🗑</button>
         </div>
@@ -212,13 +212,18 @@ function renderFileList() {
   `).join("");
 
   list.querySelectorAll('[data-action="preview"]').forEach((el) =>
-    el.addEventListener("click", () => previewFile(el.dataset.path))
+    el.addEventListener("click", () => openPreviewModal(el.dataset.path))
+  );
+  list.querySelectorAll('[data-action="copy"]').forEach((el) =>
+    el.addEventListener("click", () => copyFileContent(el.dataset.path))
   );
   list.querySelectorAll('[data-action="download"]').forEach((el) =>
     el.addEventListener("click", () => downloadFile(el.dataset.path))
   );
   list.querySelectorAll('[data-action="delete"]').forEach((el) =>
-    el.addEventListener("click", () => {
+    el.addEventListener("click", async () => {
+      const ok = await showConfirm(`Delete "${el.dataset.path}"?`, "Delete File");
+      if (!ok) return;
       delete currentFiles[el.dataset.path];
       saveProjectFiles(currentProjectId, currentFiles);
       renderFileList();
@@ -227,23 +232,51 @@ function renderFileList() {
   );
 }
 
-function previewFile(path) {
+function openPreviewModal(path) {
   const content = currentFiles[path];
+  if (content === undefined) return showToast("File not found");
   const ext = path.split(".").pop().toLowerCase();
   let srcDoc;
+
   if (ext === "html") {
     srcDoc = content;
   } else if (ext === "css") {
-    srcDoc = `<style>${content}</style><body style="padding:10px;font-family:sans-serif;color:#333">CSS applied — preview only shows styling context, use with an HTML file.</body>`;
+    srcDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+      body { font-family: -apple-system, sans-serif; margin: 0; padding: 16px; color: #222; }
+      .preview-note { font-size: 12px; color: #888; margin-bottom: 12px; font-family: monospace; }
+      ${content}
+    </style></head><body>
+      <div class="preview-note">CSS preview — pair with an HTML file to see it fully applied.</div>
+      <h1>Heading</h1>
+      <p>Paragraph text to preview typography.</p>
+      <button>Button</button>
+    </body></html>`;
   } else if (ext === "js") {
-    srcDoc = `<body style="background:#111;color:#0f0;font-family:monospace;padding:10px;"><script>
-      try { ${content} } catch(e) { document.body.innerText = 'Error: ' + e.message; }
-    <\/script></body>`;
+    srcDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+      <body style="background:#0d1117;color:#7ee787;font-family:monospace;padding:16px;margin:0;font-size:13px;white-space:pre-wrap;">
+      <div id="output"></div>
+      <script>
+        const log = document.getElementById('output');
+        const origLog = console.log;
+        console.log = (...args) => { log.innerHTML += args.join(' ') + '\\n'; origLog(...args); };
+        try { ${content} } catch(e) { log.innerHTML += 'Error: ' + e.message; }
+      <\/script></body></html>`;
   } else {
-    srcDoc = `<pre style="padding:12px;white-space:pre-wrap;font-family:monospace;">${escapeHtml(content)}</pre>`;
+    srcDoc = `<!DOCTYPE html><html><body style="margin:0;padding:16px;background:#0d1117;color:#d4e2f0;font-family:monospace;font-size:13px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(content)}</body></html>`;
   }
+
+  $("previewFileName").textContent = path;
   $("previewFrame").srcdoc = srcDoc;
-  $("previewWrap").classList.remove("hidden");
+  const modal = $("previewModal");
+  modal.dataset.currentPath = path;
+  modal.classList.remove("hidden");
+  requestAnimationFrame(() => modal.classList.add("show"));
+}
+
+function closePreviewModal() {
+  const modal = $("previewModal");
+  modal.classList.remove("show");
+  setTimeout(() => modal.classList.add("hidden"), 220);
 }
 
 function downloadFile(path) {
@@ -272,36 +305,231 @@ async function downloadZip() {
   URL.revokeObjectURL(url);
 }
 
+// ---------- LIGHTWEIGHT MARKDOWN RENDERER ----------
+// Small, dependency-free markdown -> HTML for chat bubbles. Handles: bold, italic,
+// inline code, code blocks, headings, unordered/ordered lists, links, paragraphs.
+function renderMarkdown(text) {
+  if (!text) return "";
+
+  // Escape HTML first so nothing injects
+  let src = escapeHtml(text);
+
+  // Extract fenced code blocks first so their content isn't touched by other rules
+  const codeBlocks = [];
+  src = src.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    codeBlocks.push(`<pre><code>${code.replace(/\n$/, "")}</code></pre>`);
+    return `%%CODEBLOCK${codeBlocks.length - 1}%%`;
+  });
+
+  // Split into lines for block-level parsing (headings, lists, paragraphs)
+  const lines = src.split("\n");
+  const htmlParts = [];
+  let listBuffer = [];
+  let listType = null; // 'ul' | 'ol'
+
+  function flushList() {
+    if (listBuffer.length) {
+      htmlParts.push(`<${listType}>${listBuffer.join("")}</${listType}>`);
+      listBuffer = [];
+      listType = null;
+    }
+  }
+
+  function inline(str) {
+    // bold **text**
+    str = str.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    // italic *text* (avoid matching leftover ** pairs)
+    str = str.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, "<em>$1</em>");
+    // inline code `code`
+    str = str.replace(/`([^`]+?)`/g, "<code>$1</code>");
+    // links [text](url)
+    str = str.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    return str;
+  }
+
+  for (let rawLine of lines) {
+    const line = rawLine;
+    const trimmed = line.trim();
+
+    if (/^%%CODEBLOCK\d+%%$/.test(trimmed)) {
+      flushList();
+      htmlParts.push(trimmed);
+      continue;
+    }
+
+    const h3 = trimmed.match(/^###\s+(.*)/);
+    const h2 = trimmed.match(/^##\s+(.*)/);
+    const h1 = trimmed.match(/^#\s+(.*)/);
+    if (h3) { flushList(); htmlParts.push(`<h3>${inline(h3[1])}</h3>`); continue; }
+    if (h2) { flushList(); htmlParts.push(`<h2>${inline(h2[1])}</h2>`); continue; }
+    if (h1) { flushList(); htmlParts.push(`<h1>${inline(h1[1])}</h1>`); continue; }
+
+    const ulMatch = trimmed.match(/^[-*]\s+(.*)/);
+    const olMatch = trimmed.match(/^\d+\.\s+(.*)/);
+    if (ulMatch) {
+      if (listType !== "ul") { flushList(); listType = "ul"; }
+      listBuffer.push(`<li>${inline(ulMatch[1])}</li>`);
+      continue;
+    }
+    if (olMatch) {
+      if (listType !== "ol") { flushList(); listType = "ol"; }
+      listBuffer.push(`<li>${inline(olMatch[1])}</li>`);
+      continue;
+    }
+
+    flushList();
+    if (trimmed === "") {
+      continue; // blank line = paragraph break, handled by wrapping below
+    }
+    htmlParts.push(`<p>${inline(line)}</p>`);
+  }
+  flushList();
+
+  let html = htmlParts.join("");
+  // Restore code blocks
+  html = html.replace(/%%CODEBLOCK(\d+)%%/g, (_, i) => codeBlocks[Number(i)]);
+  return html;
+}
+
 // ---------- CHAT RENDER ----------
 function renderChatLog() {
   const log = $("chatLog");
   $("emptyState").classList.toggle("hidden", currentChat.length > 0);
   log.querySelectorAll(".msg").forEach((el) => el.remove());
-  currentChat.forEach((m) => appendMsgToDom(m.role, m.content, m.fileChips));
+  currentChat.forEach((m) =>
+    appendMsgToDom(m.role, m.content, m.fileChips, { id: m.id, ts: m.ts, feedback: m.feedback })
+  );
   log.scrollTop = log.scrollHeight;
 }
 
-function appendMsgToDom(role, content, fileChips) {
+function formatTime(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function appendMsgToDom(role, content, fileChips, meta) {
+  meta = meta || {};
   const log = $("chatLog");
   $("emptyState").classList.add("hidden");
+
   const div = document.createElement("div");
   div.className = `msg ${role}`;
-  div.textContent = content;
+  if (meta.id) div.dataset.msgId = meta.id;
+
+  // content
+  const contentEl = document.createElement("div");
+  if (role === "bot") {
+    contentEl.className = "msg-content";
+    contentEl.innerHTML = renderMarkdown(content);
+  } else {
+    contentEl.className = "msg-content-plain";
+    contentEl.textContent = content;
+  }
+  div.appendChild(contentEl);
+
+  // file chips (with inline download/copy)
   if (fileChips && fileChips.length) {
     fileChips.forEach((path) => {
-      const chip = document.createElement("span");
-      chip.className = "file-chip";
-      chip.textContent = `📄 ${path}`;
-      chip.addEventListener("click", () => {
-        openFilesPanel();
-        previewFile(path);
-      });
-      div.appendChild(document.createElement("br"));
-      div.appendChild(chip);
+      const row = document.createElement("div");
+      row.className = "file-chip-row";
+      row.innerHTML = `
+        <button class="file-chip-name" data-action="open">📄 <span>${escapeHtml(path)}</span></button>
+        <div class="file-chip-actions">
+          <button class="chip-action-btn" data-action="copy" title="Copy">📋</button>
+          <button class="chip-action-btn" data-action="download" title="Download">⬇</button>
+        </div>`;
+      row.querySelector('[data-action="open"]').addEventListener("click", () => openPreviewModal(path));
+      row.querySelector('[data-action="copy"]').addEventListener("click", () => copyFileContent(path));
+      row.querySelector('[data-action="download"]').addEventListener("click", () => downloadFile(path));
+      div.appendChild(row);
     });
   }
+
+  // footer: time + like/dislike/share/copy (only for real chat messages, not system/typing)
+  if (role === "user" || role === "bot") {
+    const footer = document.createElement("div");
+    footer.className = "msg-footer";
+    const timeStr = formatTime(meta.ts);
+    footer.innerHTML = `
+      <span class="msg-time">${timeStr}</span>
+      <button class="msg-action-btn" data-action="copy-msg" title="Copy">📋</button>
+      <button class="msg-action-btn" data-action="share-msg" title="Share">↗</button>
+      ${role === "bot" ? `
+        <button class="msg-action-btn like-btn" data-action="like" title="Like">👍</button>
+        <button class="msg-action-btn dislike-btn" data-action="dislike" title="Dislike">👎</button>
+      ` : ""}`;
+
+    footer.querySelector('[data-action="copy-msg"]').addEventListener("click", () => copyText(content, "Message"));
+    footer.querySelector('[data-action="share-msg"]').addEventListener("click", () => shareText(content));
+
+    if (role === "bot") {
+      const likeBtn = footer.querySelector(".like-btn");
+      const dislikeBtn = footer.querySelector(".dislike-btn");
+      if (meta.feedback === "like") likeBtn.classList.add("active-like");
+      if (meta.feedback === "dislike") dislikeBtn.classList.add("active-dislike");
+      likeBtn.addEventListener("click", () => setFeedback(meta.id, "like", likeBtn, dislikeBtn));
+      dislikeBtn.addEventListener("click", () => setFeedback(meta.id, "dislike", dislikeBtn, likeBtn));
+    }
+
+    div.appendChild(footer);
+  }
+
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
+}
+
+function setFeedback(msgId, kind, activeBtn, otherBtn) {
+  const already = activeBtn.classList.contains(kind === "like" ? "active-like" : "active-dislike");
+  activeBtn.classList.remove("active-like", "active-dislike");
+  otherBtn.classList.remove("active-like", "active-dislike");
+  const newVal = already ? null : kind;
+  if (!already) activeBtn.classList.add(kind === "like" ? "active-like" : "active-dislike");
+
+  // persist into chat history
+  const m = currentChat.find((c) => c.id === msgId);
+  if (m) {
+    m.feedback = newVal;
+    saveChat(currentProjectId, currentChat, chatSummary);
+  }
+  if (newVal) showToast(kind === "like" ? "Thanks for the feedback 👍" : "Thanks, will improve 👎");
+}
+
+function copyText(text, label = "Text") {
+  navigator.clipboard?.writeText(text).then(
+    () => showToast(`${label} copied`),
+    () => showToast("Copy failed")
+  );
+}
+
+function copyFileContent(path) {
+  const content = currentFiles[path];
+  if (content === undefined) return showToast("File not found");
+  copyText(content, path);
+}
+
+async function shareText(text) {
+  if (navigator.share) {
+    try {
+      await navigator.share({ text });
+    } catch (e) {
+      /* user cancelled share sheet — no-op */
+    }
+  } else {
+    copyText(text, "Message");
+  }
+}
+
+let toastTimer = null;
+function showToast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.remove("hidden");
+  requestAnimationFrame(() => t.classList.add("show"));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    t.classList.remove("show");
+    setTimeout(() => t.classList.add("hidden"), 200);
+  }, 1800);
 }
 
 function addSystemMsg(text) {
@@ -407,13 +635,14 @@ function tryLocalIntent(text) {
     return true;
   }
   if (/^delete\s+this\s+file$/.test(t)) {
-    if (selectedFileForPreview) {
-      delete currentFiles[selectedFileForPreview];
+    const openPath = $("previewModal").dataset.currentPath;
+    if (openPath && currentFiles[openPath] !== undefined) {
+      delete currentFiles[openPath];
       saveProjectFiles(currentProjectId, currentFiles);
       renderFileList();
-      addSystemMsg(`🗑 Deleted: ${selectedFileForPreview}`);
+      addSystemMsg(`🗑 Deleted: ${openPath}`);
     } else {
-      addSystemMsg("Pehle koi file select/preview karo.");
+      addSystemMsg("Pehle koi file preview mein kholo (Files → 👁).");
     }
     return true;
   }
@@ -504,8 +733,9 @@ async function sendMessage() {
   input.value = "";
   autoResize();
 
-  currentChat.push({ role: "user", content: text });
-  appendMsgToDom("user", text);
+  const userMsg = { role: "user", content: text, id: genId(), ts: Date.now() };
+  currentChat.push(userMsg);
+  appendMsgToDom("user", text, null, { id: userMsg.id, ts: userMsg.ts });
   saveChat(currentProjectId, currentChat, chatSummary);
 
   // 1) try local intent first (saves LLM cost)
@@ -561,16 +791,18 @@ async function sendMessage() {
     }
 
     const touchedFiles = filesToApply.map((f) => f.path);
-    currentChat.push({ role: "bot", content: replyText, fileChips: touchedFiles });
+    const botMsg = { role: "bot", content: replyText, fileChips: touchedFiles, id: genId(), ts: Date.now() };
+    currentChat.push(botMsg);
     saveChat(currentProjectId, currentChat, chatSummary);
-    appendMsgToDom("bot", replyText, touchedFiles);
+    appendMsgToDom("bot", replyText, touchedFiles, { id: botMsg.id, ts: botMsg.ts });
   } catch (e) {
     stageTimers.forEach(clearTimeout);
     clearStatus();
     const msg = "⚠️ Connection issue. Phir se try karo.";
-    currentChat.push({ role: "bot", content: msg });
+    const errMsg = { role: "bot", content: msg, id: genId(), ts: Date.now() };
+    currentChat.push(errMsg);
     saveChat(currentProjectId, currentChat, chatSummary);
-    appendMsgToDom("bot", msg);
+    appendMsgToDom("bot", msg, null, { id: errMsg.id, ts: errMsg.ts });
   } finally {
     $("sendBtn").disabled = false;
   }
@@ -628,7 +860,6 @@ function closeFilesPanel() {
   setTimeout(() => {
     panel.classList.add("hidden");
     overlay.classList.add("hidden");
-    $("previewWrap").classList.add("hidden");
   }, 280);
 }
 
@@ -643,7 +874,11 @@ $("menuBtn").addEventListener("click", openDrawer);
 $("drawerOverlay").addEventListener("click", closeDrawer);
 $("filesBtn").addEventListener("click", openFilesPanel);
 $("filesOverlay").addEventListener("click", closeFilesPanel);
-$("closePreviewBtn").addEventListener("click", () => $("previewWrap").classList.add("hidden"));
+$("closePreviewBtn").addEventListener("click", closePreviewModal);
+$("previewRefreshBtn").addEventListener("click", () => {
+  const path = $("previewModal").dataset.currentPath;
+  if (path) openPreviewModal(path);
+});
 $("newProjectBtn").addEventListener("click", async () => {
   const name = await showPrompt("Project ka naam?", "My Project", "New Project");
   if (name) createProject(name);
