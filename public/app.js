@@ -2,6 +2,22 @@
 
 const $ = (id) => document.getElementById(id);
 
+// ---------- SVG ICONS (no emoji anywhere in the UI) ----------
+const ICON = {
+  eye: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  copy: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+  download: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+  trash: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+  file: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+  share: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/></svg>`,
+  thumbsUp: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>`,
+  thumbsDown: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>`,
+  check: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+  warning: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+  folder: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2Z"/></svg>`,
+  wave: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v0a2 2 0 0 0-4 0v0a2 2 0 0 0-4 0v6a8 8 0 0 0 8 8h1a7 7 0 0 0 7-7v-1a2 2 0 0 0-4 0Z"/></svg>`,
+};
+
 // ---------- STATE ----------
 let currentProjectId = localStorage.getItem("codeagent:lastProject") || null;
 let currentFiles = {};      // {path: content}
@@ -173,7 +189,7 @@ function renderProjectList() {
         <b>${escapeHtml(p.name)}</b>
         <span>${date}</span>
       </div>
-      <button class="mini-btn danger" data-action="delete" data-id="${id}">🗑</button>
+      <button class="mini-btn danger" data-action="delete" data-id="${id}">${ICON.trash}</button>
     </div>`;
   }).join("");
 
@@ -202,10 +218,10 @@ function renderFileList() {
       <div class="file-item-top">
         <b>${escapeHtml(path)}</b>
         <div class="file-item-actions">
-          <button class="mini-btn" data-action="preview" data-path="${escapeAttr(path)}">👁</button>
-          <button class="mini-btn" data-action="copy" data-path="${escapeAttr(path)}">📋</button>
-          <button class="mini-btn" data-action="download" data-path="${escapeAttr(path)}">⬇</button>
-          <button class="mini-btn danger" data-action="delete" data-path="${escapeAttr(path)}">🗑</button>
+          <button class="mini-btn" data-action="preview" data-path="${escapeAttr(path)}">${ICON.eye}</button>
+          <button class="mini-btn" data-action="copy" data-path="${escapeAttr(path)}">${ICON.copy}</button>
+          <button class="mini-btn" data-action="download" data-path="${escapeAttr(path)}">${ICON.download}</button>
+          <button class="mini-btn danger" data-action="delete" data-path="${escapeAttr(path)}">${ICON.trash}</button>
         </div>
       </div>
     </div>
@@ -227,7 +243,7 @@ function renderFileList() {
       delete currentFiles[el.dataset.path];
       saveProjectFiles(currentProjectId, currentFiles);
       renderFileList();
-      addSystemMsg(`🗑 Deleted: ${el.dataset.path}`);
+      addSystemMsg(`Deleted: ${el.dataset.path}`);
     })
   );
 }
@@ -433,10 +449,10 @@ function appendMsgToDom(role, content, fileChips, meta) {
       const row = document.createElement("div");
       row.className = "file-chip-row";
       row.innerHTML = `
-        <button class="file-chip-name" data-action="open">📄 <span>${escapeHtml(path)}</span></button>
+        <button class="file-chip-name" data-action="open">${ICON.file} <span>${escapeHtml(path)}</span></button>
         <div class="file-chip-actions">
-          <button class="chip-action-btn" data-action="copy" title="Copy">📋</button>
-          <button class="chip-action-btn" data-action="download" title="Download">⬇</button>
+          <button class="chip-action-btn" data-action="copy" title="Copy">${ICON.copy}</button>
+          <button class="chip-action-btn" data-action="download" title="Download">${ICON.download}</button>
         </div>`;
       row.querySelector('[data-action="open"]').addEventListener("click", () => openPreviewModal(path));
       row.querySelector('[data-action="copy"]').addEventListener("click", () => copyFileContent(path));
@@ -445,31 +461,35 @@ function appendMsgToDom(role, content, fileChips, meta) {
     });
   }
 
-  // footer: time + like/dislike/share/copy (only for real chat messages, not system/typing)
-  if (role === "user" || role === "bot") {
+  // USER bubble: timestamp only, no action row (keeps the bubble small and quiet)
+  if (role === "user") {
+    const timeEl = document.createElement("span");
+    timeEl.className = "msg-time-only";
+    timeEl.textContent = formatTime(meta.ts);
+    div.appendChild(timeEl);
+  }
+
+  // BOT panel: full action row — time, copy, share, like/dislike (matches Claude-style layout)
+  if (role === "bot") {
     const footer = document.createElement("div");
     footer.className = "msg-footer";
     const timeStr = formatTime(meta.ts);
     footer.innerHTML = `
       <span class="msg-time">${timeStr}</span>
-      <button class="msg-action-btn" data-action="copy-msg" title="Copy">📋</button>
-      <button class="msg-action-btn" data-action="share-msg" title="Share">↗</button>
-      ${role === "bot" ? `
-        <button class="msg-action-btn like-btn" data-action="like" title="Like">👍</button>
-        <button class="msg-action-btn dislike-btn" data-action="dislike" title="Dislike">👎</button>
-      ` : ""}`;
+      <button class="msg-action-btn" data-action="copy-msg" title="Copy">${ICON.copy}</button>
+      <button class="msg-action-btn" data-action="share-msg" title="Share">${ICON.share}</button>
+      <button class="msg-action-btn like-btn" data-action="like" title="Like">${ICON.thumbsUp}</button>
+      <button class="msg-action-btn dislike-btn" data-action="dislike" title="Dislike">${ICON.thumbsDown}</button>`;
 
     footer.querySelector('[data-action="copy-msg"]').addEventListener("click", () => copyText(content, "Message"));
     footer.querySelector('[data-action="share-msg"]').addEventListener("click", () => shareText(content));
 
-    if (role === "bot") {
-      const likeBtn = footer.querySelector(".like-btn");
-      const dislikeBtn = footer.querySelector(".dislike-btn");
-      if (meta.feedback === "like") likeBtn.classList.add("active-like");
-      if (meta.feedback === "dislike") dislikeBtn.classList.add("active-dislike");
-      likeBtn.addEventListener("click", () => setFeedback(meta.id, "like", likeBtn, dislikeBtn));
-      dislikeBtn.addEventListener("click", () => setFeedback(meta.id, "dislike", dislikeBtn, likeBtn));
-    }
+    const likeBtn = footer.querySelector(".like-btn");
+    const dislikeBtn = footer.querySelector(".dislike-btn");
+    if (meta.feedback === "like") likeBtn.classList.add("active-like");
+    if (meta.feedback === "dislike") dislikeBtn.classList.add("active-dislike");
+    likeBtn.addEventListener("click", () => setFeedback(meta.id, "like", likeBtn, dislikeBtn));
+    dislikeBtn.addEventListener("click", () => setFeedback(meta.id, "dislike", dislikeBtn, likeBtn));
 
     div.appendChild(footer);
   }
@@ -491,7 +511,7 @@ function setFeedback(msgId, kind, activeBtn, otherBtn) {
     m.feedback = newVal;
     saveChat(currentProjectId, currentChat, chatSummary);
   }
-  if (newVal) showToast(kind === "like" ? "Thanks for the feedback 👍" : "Thanks, will improve 👎");
+  if (newVal) showToast(kind === "like" ? "Thanks for the feedback" : "Thanks, will improve");
 }
 
 function copyText(text, label = "Text") {
@@ -581,7 +601,7 @@ function updateStatus(text, done = false) {
   if (done) {
     statusEl.classList.add("done");
     const spinner = statusEl.querySelector(".status-spinner");
-    if (spinner) spinner.outerHTML = `<span class="status-check">✓</span>`;
+    if (spinner) spinner.outerHTML = `<span class="status-check">${ICON.check}</span>`;
   }
   $("chatLog").scrollTop = $("chatLog").scrollHeight;
 }
@@ -615,7 +635,7 @@ function tryLocalIntent(text) {
   // list files
   if (/^(list|show)\s+files?$/.test(t) || /files?\s+dikhao/.test(t) || /list\s+all\s+files/.test(t)) {
     const paths = Object.keys(currentFiles);
-    addSystemMsg(paths.length ? `📁 Files:\n${paths.join("\n")}` : "Koi file nahi hai abhi.");
+    addSystemMsg(paths.length ? `Files:\n${paths.join("\n")}` : "Koi file nahi hai abhi.");
     return true;
   }
 
@@ -628,7 +648,7 @@ function tryLocalIntent(text) {
       delete currentFiles[match];
       saveProjectFiles(currentProjectId, currentFiles);
       renderFileList();
-      addSystemMsg(`🗑 Deleted: ${match}`);
+      addSystemMsg(`Deleted: ${match}`);
     } else {
       addSystemMsg(`File "${target}" nahi mili.`);
     }
@@ -640,7 +660,7 @@ function tryLocalIntent(text) {
       delete currentFiles[openPath];
       saveProjectFiles(currentProjectId, currentFiles);
       renderFileList();
-      addSystemMsg(`🗑 Deleted: ${openPath}`);
+      addSystemMsg(`Deleted: ${openPath}`);
     } else {
       addSystemMsg("Pehle koi file preview mein kholo (Files → 👁).");
     }
@@ -689,8 +709,10 @@ async function maybeSummarize() {
 }
 
 // ---------- APPLY LLM FILE OPS ----------
+// Returns { touched: [paths actually changed], failed: [paths where an edit snippet didn't match] }
 function applyFileOps(files) {
   const touched = [];
+  const failed = [];
   for (const f of files) {
     if (!f.path) continue;
     if (f.action === "create" || (f.action === "edit" && f.content && !currentFiles[f.path])) {
@@ -701,24 +723,30 @@ function applyFileOps(files) {
       if (content === undefined) {
         // file doesn't exist yet, fall back to content if given
         content = f.content ?? "";
-      } else if (Array.isArray(f.edits)) {
+        touched.push(f.path);
+      } else if (Array.isArray(f.edits) && f.edits.length) {
+        let fileChanged = false;
+        let fileHadMiss = false;
         for (const e of f.edits) {
           if (e.find && content.includes(e.find)) {
             content = content.replace(e.find, e.replace ?? "");
+            fileChanged = true;
           } else if (e.find) {
-            // find not matched — append a note so user notices
             console.warn(`Edit snippet not found in ${f.path}:`, e.find);
+            fileHadMiss = true;
           }
         }
+        if (fileChanged) touched.push(f.path);
+        if (fileHadMiss) failed.push(f.path);
       } else if (f.content) {
         content = f.content;
+        touched.push(f.path);
       }
       currentFiles[f.path] = content;
-      touched.push(f.path);
     }
   }
   if (touched.length) saveProjectFiles(currentProjectId, currentFiles);
-  return touched;
+  return { touched, failed };
 }
 
 // ---------- SEND MESSAGE ----------
@@ -775,15 +803,21 @@ async function sendMessage() {
 
     if (filesToApply.length) {
       // Walk through each file so the user sees exactly what's happening, one by one.
+      // IMPORTANT: reuse the single status bubble via updateStatus() only — never call
+      // pushStatus() again mid-loop, or the previous bubble is orphaned still spinning.
+      let anyEditFailed = false;
       for (const f of filesToApply) {
         const verb = f.action === "edit" ? "Editing" : "Creating";
         updateStatus(`${verb} ${f.path}...`);
-        await sleep(350); // brief pause so each step is actually readable
-        applyFileOps([f]);
-        pushStatus(`${f.action === "edit" ? "Updated" : "Created"} ${f.path}`);
-        updateStatus(`${f.action === "edit" ? "Updated" : "Created"} ${f.path}`, true);
+        await sleep(300); // brief pause so each step is actually readable
+        const result = applyFileOps([f]);
+        if (result.failed.length) anyEditFailed = true;
+        const label = result.failed.length
+          ? `Edit skipped (no match): ${f.path}`
+          : `${f.action === "edit" ? "Updated" : "Created"} ${f.path}`;
+        updateStatus(label);
       }
-      finishStatus("Done ✓");
+      finishStatus(anyEditFailed ? "Done — with a skipped edit" : "Done");
       renderFileList();
       $("projectSub").textContent = `${Object.keys(currentFiles).length} files`;
     } else {
@@ -796,14 +830,17 @@ async function sendMessage() {
     saveChat(currentProjectId, currentChat, chatSummary);
     appendMsgToDom("bot", replyText, touchedFiles, { id: botMsg.id, ts: botMsg.ts });
   } catch (e) {
-    stageTimers.forEach(clearTimeout);
-    clearStatus();
-    const msg = "⚠️ Connection issue. Phir se try karo.";
+    const msg = "Connection issue — phir se try karo.";
     const errMsg = { role: "bot", content: msg, id: genId(), ts: Date.now() };
     currentChat.push(errMsg);
     saveChat(currentProjectId, currentChat, chatSummary);
     appendMsgToDom("bot", msg, null, { id: errMsg.id, ts: errMsg.ts });
   } finally {
+    // Guaranteed cleanup — no matter how the try block exits (success, thrown error,
+    // JSON parse failure), the spinner/status bubble and pending timers must never
+    // survive past this point. This is what was causing the "loading never stops" bug.
+    stageTimers.forEach(clearTimeout);
+    clearStatus();
     $("sendBtn").disabled = false;
   }
 }
