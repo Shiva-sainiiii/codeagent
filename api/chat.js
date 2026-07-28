@@ -41,7 +41,14 @@ RULES:
 
 5. Never invent file content you weren't asked for. Never include files unrelated to the request.
 
-6. Keep "reply" short (1-3 sentences) — the code speaks for itself.`;
+6. Keep "reply" short (1-3 sentences) — the code speaks for itself.
+
+7. MULTI-FILE PROJECTS MUST ACTUALLY WORK TOGETHER — this is critical:
+   - If you create index.html + style.css + script.js (or edit one of an existing trio), the HTML MUST have <link rel="stylesheet" href="style.css"> in <head> and <script src="script.js"></script> before </body> — use the exact relative filename you gave each file.
+   - Every id/class the JS uses with getElementById/querySelector MUST exist in the HTML you wrote. Every class the CSS styles MUST exist in the HTML you wrote. Do not style or query something you didn't create.
+   - Prefer CSS Grid or Flexbox for any button/tile layout (e.g. calculator keypads, toolbars) so rows wrap correctly instead of overflowing the screen — never rely on inline-block buttons with no container width control.
+   - Before returning the JSON, mentally trace the user flow once (e.g. "user taps 7, then +, then 3, then =") and check that the class/id names line up across all three files.
+   - When editing only ONE file of an existing linked trio, do not break the existing links — keep referencing the same filenames the other files already expect.`;
 
 // simple sleep helper
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
