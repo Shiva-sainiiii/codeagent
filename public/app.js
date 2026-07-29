@@ -694,7 +694,27 @@ function buildTrimmedMessages() {
 function buildFileContext() {
   const paths = Object.keys(currentFiles);
   if (!paths.length) return "";
-  return paths.map((p) => `--- ${p} ---\n${currentFiles[p]}`).join("\n\n").slice(0, 6000); // cap size
+
+  // Prioritize files the user's latest message actually names (e.g. "script.js mein fix karo")
+  // so if we do have to cut something for size, it's the least-relevant file, not the one being edited.
+  const lastUserMsg = [...currentChat].reverse().find((m) => m.role === "user");
+  const mentioned = lastUserMsg
+    ? paths.filter((p) => lastUserMsg.content.toLowerCase().includes(p.toLowerCase()))
+    : [];
+  const rest = paths.filter((p) => !mentioned.includes(p));
+  const ordered = [...mentioned, ...rest];
+
+  const CAP = 18000; // free models here have large context windows; 6000 was cutting files mid-content
+  let out = "";
+  for (const p of ordered) {
+    const block = `--- ${p} ---\n${currentFiles[p]}\n\n`;
+    if (out.length + block.length > CAP) {
+      out += `--- ${p} --- (omitted for space, ${currentFiles[p].length} chars)\n\n`;
+      continue;
+    }
+    out += block;
+  }
+  return out.trim();
 }
 
 async function maybeSummarize() {
@@ -906,6 +926,106 @@ function autoResize() {
   el.style.height = Math.min(el.scrollHeight, 100) + "px";
 }
 
+// ---------- FILE / FOLDER IMPORT ----------
+// Lets the user bring in an existing project (multiple loose files, or a whole folder via
+// webkitdirectory) so the AI can see it once and keep working on it — same idea as pasting
+// files into Claude. Binary files are skipped since the model can't use them as text anyway.
+
+const BINARY_EXT = new Set([
+  "png","jpg","jpeg","gif","webp","ico","svg","bmp","mp3","mp4","wav","ogg","woff","woff2",
+  "ttf","eot","zip","tar","gz","rar","7z","pdf","exe","dll","so","o","class","jar","db","sqlite",
+]);
+const MAX_IMPORT_FILE_CHARS = 30000; // guard against accidentally importing a giant minified bundle
+const MAX_IMPORT_TOTAL_FILES = 40;
+
+function extOf(name) {
+  const i = name.lastIndexOf(".");
+  return i === -1 ? "" : name.slice(i + 1).toLowerCase();
+}
+
+function openImportPicker() {
+  $("importPickerOverlay").classList.remove("hidden");
+  requestAnimationFrame(() => $("importPickerOverlay").classList.add("show"));
+}
+function closeImportPicker() {
+  const ov = $("importPickerOverlay");
+  ov.classList.remove("show");
+  setTimeout(() => ov.classList.add("hidden"), 200);
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+async function handleImportedFileList(fileList) {
+  const files = Array.from(fileList);
+  if (!files.length) return;
+
+  if (!currentProjectId) {
+    const name = await showPrompt("Project ka naam?", "Imported Project", "New Project");
+    if (!name) return;
+    createProject(name);
+  }
+
+  const usable = files.filter((f) => !BINARY_EXT.has(extOf(f.name)));
+  const skippedBinary = files.length - usable.length;
+  const capped = usable.slice(0, MAX_IMPORT_TOTAL_FILES);
+  const skippedCap = usable.length - capped.length;
+
+  addSystemMsg(`Importing ${capped.length} file(s)...`);
+
+  const imported = [];
+  let skippedTooBig = 0;
+  for (const file of capped) {
+    // webkitRelativePath preserves folder structure (e.g. "myapp/src/index.js") when a
+    // folder was picked; for loose multi-file picks it's empty, so fall back to file.name.
+    const relPath = file.webkitRelativePath && file.webkitRelativePath.length
+      ? file.webkitRelativePath
+      : file.name;
+    try {
+      const text = await readFileAsText(file);
+      if (text.length > MAX_IMPORT_FILE_CHARS) {
+        skippedTooBig++;
+        continue;
+      }
+      imported.push({ path: relPath, content: text });
+    } catch {
+      // unreadable as text (likely binary we didn't catch by extension) — skip quietly
+    }
+  }
+
+  if (!imported.length) {
+    addSystemMsg("Koi readable text file nahi mili import karne ke liye.");
+    return;
+  }
+
+  for (const f of imported) {
+    currentFiles[f.path] = f.content;
+  }
+  saveProjectFiles(currentProjectId, currentFiles);
+  renderFileList();
+  $("projectSub").textContent = `${Object.keys(currentFiles).length} files`;
+
+  // One consolidated system note in chat — this is what keeps it token-efficient: the AI
+  // only needs to be told once what arrived. Full content already lives in currentFiles and
+  // flows through buildFileContext() on the next message, same as any other project file,
+  // so we don't duplicate the content again here in the chat log itself.
+  const list = imported.map((f) => f.path).join("\n");
+  let note = `Imported ${imported.length} file(s):\n${list}`;
+  const extras = [];
+  if (skippedBinary) extras.push(`${skippedBinary} binary file(s) skipped`);
+  if (skippedCap) extras.push(`${skippedCap} file(s) skipped (import limit is ${MAX_IMPORT_TOTAL_FILES} per batch)`);
+  if (skippedTooBig) extras.push(`${skippedTooBig} file(s) skipped (too large, over ~30k chars)`);
+  if (extras.length) note += `\n(${extras.join(", ")})`;
+  addSystemMsg(note);
+  showToast(`${imported.length} file(s) imported`);
+}
+
 // ---------- EVENT WIRING ----------
 $("menuBtn").addEventListener("click", openDrawer);
 $("drawerOverlay").addEventListener("click", closeDrawer);
@@ -921,6 +1041,27 @@ $("newProjectBtn").addEventListener("click", async () => {
   if (name) createProject(name);
 });
 $("downloadZipBtn").addEventListener("click", downloadZip);
+$("importFilesBtn").addEventListener("click", openImportPicker);
+$("importPickerCancelBtn").addEventListener("click", closeImportPicker);
+$("importPickerOverlay").addEventListener("click", (e) => {
+  if (e.target.id === "importPickerOverlay") closeImportPicker();
+});
+$("pickFilesBtn").addEventListener("click", () => {
+  closeImportPicker();
+  $("importFilesInput").click();
+});
+$("pickFolderBtn").addEventListener("click", () => {
+  closeImportPicker();
+  $("importFolderInput").click();
+});
+$("importFilesInput").addEventListener("change", (e) => {
+  handleImportedFileList(e.target.files);
+  e.target.value = ""; // allow re-selecting the same file(s) later
+});
+$("importFolderInput").addEventListener("change", (e) => {
+  handleImportedFileList(e.target.files);
+  e.target.value = "";
+});
 $("sendBtn").addEventListener("click", sendMessage);
 $("chatInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
