@@ -25,9 +25,47 @@ let currentChat = [];       // [{role, content}]
 let chatSummary = "";       // rolling summary of older turns
 
 // ---------- LOCALSTORAGE HELPERS ----------
+// safeParse: never let one corrupted localStorage entry (partial write, old buggy version,
+// browser storage quota hiccup, etc.) permanently break a whole panel. This was the actual
+// cause of the Projects drawer refusing to open — listProjects() called JSON.parse directly
+// on unvalidated storage data with no fallback, so a single bad entry threw uncaught right
+// at the top of renderProjectList().
+function safeParse(raw, fallback) {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("Corrupted localStorage JSON, falling back:", e);
+    return fallback;
+  }
+}
+
 function listProjects() {
   const raw = localStorage.getItem("codeagent:projects");
-  return raw ? JSON.parse(raw) : {}; // {id: {name, updatedAt}}
+  const parsed = safeParse(raw, null);
+  if (parsed && typeof parsed === "object") return parsed;
+
+  // Index was missing or corrupted. Before giving up, scan for orphaned "project:<id>"
+  // entries that are still perfectly readable and rebuild the index from them — otherwise
+  // a single bad write to the index alone would strand real project data forever, even
+  // though the underlying files are fine.
+  const recovered = {};
+  let foundAny = false;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith("project:")) continue;
+    const id = key.slice("project:".length);
+    const data = safeParse(localStorage.getItem(key), null);
+    if (data) {
+      recovered[id] = { name: `Recovered Project`, updatedAt: data.updatedAt || Date.now() };
+      foundAny = true;
+    }
+  }
+  if (foundAny) {
+    localStorage.setItem("codeagent:projects", JSON.stringify(recovered));
+    console.warn("Projects index was corrupted — recovered", Object.keys(recovered).length, "project(s) from raw storage.");
+  }
+  return recovered;
 }
 function saveProjectMeta(id, meta) {
   const all = listProjects();
@@ -43,7 +81,8 @@ function deleteProjectMeta(id) {
 }
 function loadProjectFiles(id) {
   const raw = localStorage.getItem(`project:${id}`);
-  return raw ? JSON.parse(raw).files : {};
+  const parsed = safeParse(raw, { files: {} });
+  return parsed.files || {};
 }
 function saveProjectFiles(id, files) {
   localStorage.setItem(`project:${id}`, JSON.stringify({ files, updatedAt: Date.now() }));
@@ -52,8 +91,7 @@ function saveProjectFiles(id, files) {
 }
 function loadChat(id) {
   const raw = localStorage.getItem(`chat:${id}`);
-  if (!raw) return { messages: [], summary: "" };
-  return JSON.parse(raw);
+  return safeParse(raw, { messages: [], summary: "" });
 }
 function saveChat(id, messages, summary) {
   localStorage.setItem(`chat:${id}`, JSON.stringify({ messages, summary }));
