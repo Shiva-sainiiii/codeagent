@@ -297,6 +297,23 @@ function inlineProjectAssets(htmlPath, htmlContent) {
     }
   );
 
+  // Safety net: AI-generated code very often reads localStorage at the top level of the
+  // script (high scores, saved settings) before any try/catch of its own exists yet. If
+  // storage access ever throws in the preview sandbox, that exception kills the *entire*
+  // script with nothing rendering — the game looked "connected" (CSS applied) but blank,
+  // which is exactly what was happening here. A tiny in-memory fallback keeps the rest of
+  // the script running even in that edge case, on top of the sandbox now allowing real storage.
+  const storageShim = `<script>
+(function(){
+  function memoryStorage(){var d={};return{getItem:function(k){return d.hasOwnProperty(k)?d[k]:null;},setItem:function(k,v){d[k]=String(v);},removeItem:function(k){delete d[k];},clear:function(){d={};},key:function(i){return Object.keys(d)[i]||null;},get length(){return Object.keys(d).length;}};}
+  try { window.localStorage.setItem('__t','1'); window.localStorage.removeItem('__t'); }
+  catch(e) { try { Object.defineProperty(window,'localStorage',{value:memoryStorage(),configurable:true}); } catch(e2){} }
+  try { window.sessionStorage.setItem('__t','1'); window.sessionStorage.removeItem('__t'); }
+  catch(e) { try { Object.defineProperty(window,'sessionStorage',{value:memoryStorage(),configurable:true}); } catch(e2){} }
+})();
+<\/script>`;
+  out = out.replace(/<head[^>]*>/i, (m) => `${m}\n${storageShim}`);
+
   return out;
 }
 
