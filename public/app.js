@@ -248,6 +248,58 @@ function renderFileList() {
   );
 }
 
+// Resolves a relative href/src (e.g. "style.css", "./js/script.js", "../shared/style.css")
+// against the folder the given HTML file lives in, so imports/multi-file projects with
+// folder structure (e.g. "New folder/index.html" + "New folder/style.css") still match up.
+function resolveRelativePath(htmlPath, ref) {
+  if (/^https?:\/\//i.test(ref) || ref.startsWith("//")) return null; // external, leave alone
+  const htmlDir = htmlPath.includes("/") ? htmlPath.slice(0, htmlPath.lastIndexOf("/")) : "";
+  const parts = (htmlDir ? htmlDir.split("/") : []).concat(ref.split("/"));
+  const stack = [];
+  for (const part of parts) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") stack.pop();
+    else stack.push(part);
+  }
+  return stack.join("/");
+}
+
+// Builds a fully self-contained HTML document for the iframe preview by inlining any
+// same-project <link rel="stylesheet"> and <script src="..."> the HTML references.
+// srcdoc iframes have no real base URL, so a plain relative href/src (style.css, script.js)
+// can never resolve on its own — this is what was breaking preview for every multi-file
+// project (Snake Rush, calculator, imported folders, etc): the HTML rendered with no CSS
+// and no JS because the browser looked for those files at the app's own root, not the
+// project's virtual folder.
+function inlineProjectAssets(htmlPath, htmlContent) {
+  let out = htmlContent;
+
+  out = out.replace(
+    /<link\b[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>|<link\b[^>]*href=["']([^"']+)["'][^>]*rel=["']stylesheet["'][^>]*>/gi,
+    (match, hrefA, hrefB) => {
+      const href = hrefA || hrefB;
+      const resolved = resolveRelativePath(htmlPath, href);
+      if (resolved && currentFiles[resolved] !== undefined) {
+        return `<style>\n${currentFiles[resolved]}\n</style>`;
+      }
+      return match; // leave untouched (external URL, or file not in project — don't silently drop it)
+    }
+  );
+
+  out = out.replace(
+    /<script\b([^>]*)\bsrc=["']([^"']+)["']([^>]*)><\/script>/gi,
+    (match, before, src, after) => {
+      const resolved = resolveRelativePath(htmlPath, src);
+      if (resolved && currentFiles[resolved] !== undefined) {
+        return `<script${before}${after}>\n${currentFiles[resolved]}\n</script>`;
+      }
+      return match;
+    }
+  );
+
+  return out;
+}
+
 function openPreviewModal(path) {
   const content = currentFiles[path];
   if (content === undefined) return showToast("File not found");
@@ -255,7 +307,7 @@ function openPreviewModal(path) {
   let srcDoc;
 
   if (ext === "html") {
-    srcDoc = content;
+    srcDoc = inlineProjectAssets(path, content);
   } else if (ext === "css") {
     srcDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
       body { font-family: -apple-system, sans-serif; margin: 0; padding: 16px; color: #222; }
