@@ -947,7 +947,15 @@ function escapeAttr(s) {
 }
 
 function openDrawer() {
-  renderProjectList();
+  try {
+    renderProjectList();
+  } catch (e) {
+    console.error("renderProjectList failed:", e);
+    // Don't let a data problem prevent the drawer from opening at all —
+    // show an error state inside it instead of nothing happening on tap.
+    const list = $("projectList");
+    if (list) list.innerHTML = `<p style="color:var(--text-dim);font-size:13px;padding:10px;">Kuch error aaya projects load karte waqt.</p>`;
+  }
   const drawer = $("drawer");
   const overlay = $("drawerOverlay");
   drawer.classList.remove("hidden");
@@ -968,7 +976,13 @@ function closeDrawer() {
   }, 280);
 }
 function openFilesPanel() {
-  renderFileList();
+  try {
+    renderFileList();
+  } catch (e) {
+    console.error("renderFileList failed:", e);
+    const list = $("fileList");
+    if (list) list.innerHTML = `<p style="color:var(--text-dim);font-size:13px;padding:10px;">Kuch error aaya files load karte waqt.</p>`;
+  }
   const panel = $("filesPanel");
   const overlay = $("filesOverlay");
   panel.classList.remove("hidden");
