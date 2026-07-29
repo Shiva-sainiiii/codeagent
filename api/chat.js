@@ -66,7 +66,7 @@ async function callOpenRouter(messages, apiKey, model) {
       model,
       messages,
       temperature: 0.3,
-      max_tokens: 3000,
+      max_tokens: 8000,
     }),
   });
 
@@ -93,7 +93,17 @@ function extractJson(raw) {
   const end = cleaned.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("No JSON object found in model output");
   const jsonStr = cleaned.slice(start, end + 1);
-  return JSON.parse(jsonStr);
+  try {
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    // Most common cause: the model hit max_tokens mid-file (big multi-file responses,
+    // e.g. a full game's worth of HTML+CSS+JS) and the JSON string got cut off.
+    // Surface this distinctly so the caller can tell the user to retry / simplify,
+    // instead of silently shipping half a file that "looks" connected but isn't.
+    const truncErr = new Error("Model output was cut off before valid JSON completed (likely max_tokens limit)");
+    truncErr.truncated = true;
+    throw truncErr;
+  }
 }
 
 module.exports = async (req, res) => {
@@ -137,6 +147,7 @@ module.exports = async (req, res) => {
     chatMessages.push(...recent);
 
     let lastErr = null;
+    let wasTruncated = false;
     for (const model of MODEL_CHAIN) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
@@ -145,6 +156,10 @@ module.exports = async (req, res) => {
           return res.status(200).json({ ok: true, model, ...parsed });
         } catch (e) {
           lastErr = e;
+          if (e.truncated) {
+            wasTruncated = true;
+            break; // retrying the same prompt/model won't fix a token-budget cutoff
+          }
           // rate limit or server error -> retry once, then move to next model
           if (e.status === 429 || e.status >= 500) {
             await sleep(600 * (attempt + 1));
@@ -156,18 +171,28 @@ module.exports = async (req, res) => {
       }
     }
 
+    if (wasTruncated) {
+      return res.status(200).json({
+        ok: false,
+        reply:
+          "Response bahut bada tha aur beech mein kat gaya. Chhote steps mein banwao — pehle ek file, phir agli.",
+        files: [],
+        error: lastErr ? lastErr.message : "truncated",
+      });
+    }
+
     // All models exhausted
     return res.status(200).json({
       ok: false,
       reply:
-        "⚠️ Sab free models abhi busy/rate-limited hain. Thoda ruk ke phir try karo (30-60 sec).",
+        "Sab free models abhi busy/rate-limited hain. Thoda ruk ke phir try karo (30-60 sec).",
       files: [],
       error: lastErr ? lastErr.message : "unknown error",
     });
   } catch (e) {
     return res.status(500).json({
       ok: false,
-      reply: "⚠️ Kuch server error aaya. Phir se try karo.",
+      reply: "Kuch server error aaya. Phir se try karo.",
       files: [],
       error: e.message,
     });
