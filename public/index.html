@@ -42,6 +42,10 @@
       <div class="drawer-header">
         <h3>Files</h3>
         <div class="file-actions">
+          <button id="importFilesBtn" class="btn-small">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Import
+          </button>
           <button id="downloadZipBtn" class="btn-small">
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Zip
@@ -50,6 +54,32 @@
       </div>
       <div id="fileList" class="file-list"></div>
     </aside>
+
+    <!-- Hidden inputs for import: one for picking loose files (multi-select), one for a whole folder -->
+    <input type="file" id="importFilesInput" multiple hidden
+      accept=".js,.jsx,.ts,.tsx,.html,.htm,.css,.json,.md,.txt,.py,.java,.c,.cpp,.h,.go,.rs,.php,.rb,.sql,.yml,.yaml,.xml,.svg" />
+    <input type="file" id="importFolderInput" webkitdirectory directory multiple hidden />
+
+    <!-- IMPORT SOURCE PICKER (choose files vs folder) -->
+    <div id="importPickerOverlay" class="modal-overlay hidden">
+      <div class="modal-box">
+        <h3 class="modal-title">Import code</h3>
+        <p class="modal-message">Purane project ki files ya poora folder select karo. AI unhe padhega aur usi context ke saath aage kaam karega.</p>
+        <div class="import-picker-actions">
+          <button id="pickFilesBtn" class="modal-btn modal-btn-import">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Pick files
+          </button>
+          <button id="pickFolderBtn" class="modal-btn modal-btn-import">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2Z"/></svg>
+            Pick folder
+          </button>
+        </div>
+        <div class="modal-actions">
+          <button id="importPickerCancelBtn" class="modal-btn modal-btn-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
 
     <!-- FULL-SCREEN LIVE PREVIEW -->
     <div id="previewModal" class="preview-modal hidden">
