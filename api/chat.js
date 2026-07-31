@@ -53,6 +53,34 @@ RULES:
 // simple sleep helper
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+async function callOpenRouterStream(messages, apiKey, model) {
+  const res = await fetch(OPENROUTER_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+      "HTTP-Referer": "https://codeagent.vercel.app",
+      "X-Title": "CodeAgent",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.3,
+      max_tokens: 8000,
+      stream: true,
+    }),
+  });
+
+  if (!res.ok) {
+    const status = res.status;
+    const text = await res.text().catch(() => "");
+    const err = new Error(`OpenRouter ${status}: ${text.slice(0, 300)}`);
+    err.status = status;
+    throw err;
+  }
+  return res; // caller reads the SSE body stream directly
+}
+
 async function callOpenRouter(messages, apiKey, model) {
   const res = await fetch(OPENROUTER_URL, {
     method: "POST",
@@ -88,23 +116,141 @@ function extractJson(raw) {
   // Strip markdown fences if the model added them anyway
   let cleaned = raw.trim();
   cleaned = cleaned.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "");
-  // Try to find the outermost { ... }
+
   const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("No JSON object found in model output");
+  if (start === -1) throw new Error("No JSON object found in model output");
+
+  // Walk forward counting brace depth, respecting string literals and escapes, so a
+  // stray '}' inside a code snippet in "content" (extremely common — JS/CSS is full of
+  // them) can't fool a naive lastIndexOf('}') into cutting the JSON at the wrong point.
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+  for (let i = start; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+
+  if (end === -1) {
+    // Never found a balanced close — genuinely truncated mid-object.
+    const truncErr = new Error("Model output was cut off before valid JSON completed (likely max_tokens limit)");
+    truncErr.truncated = true;
+    throw truncErr;
+  }
+
   const jsonStr = cleaned.slice(start, end + 1);
   try {
     return JSON.parse(jsonStr);
   } catch (e) {
-    // Most common cause: the model hit max_tokens mid-file (big multi-file responses,
-    // e.g. a full game's worth of HTML+CSS+JS) and the JSON string got cut off.
-    // Surface this distinctly so the caller can tell the user to retry / simplify,
-    // instead of silently shipping half a file that "looks" connected but isn't.
     const truncErr = new Error("Model output was cut off before valid JSON completed (likely max_tokens limit)");
     truncErr.truncated = true;
     throw truncErr;
   }
 }
+
+async function handleStreamingRequest(res, chatMessages) {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  let lastErr = null;
+  let wasTruncated = false;
+
+  for (const model of MODEL_CHAIN) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let accumulated = "";
+      try {
+        const streamRes = await callOpenRouterStream(chatMessages, apiKey_GLOBAL, model);
+        const reader = streamRes.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop(); // keep incomplete line for next chunk
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const payload = trimmed.slice(5).trim();
+            if (payload === "[DONE]") continue;
+            try {
+              const json = JSON.parse(payload);
+              const delta = json?.choices?.[0]?.delta?.content;
+              if (delta) {
+                accumulated += delta;
+                // Best-effort: try to surface just the "reply" text as it streams in,
+                // so the user sees words appearing instead of a static spinner. This is
+                // a light regex, not full parsing — it only feeds the visual "typing"
+                // effect; the authoritative parse happens once the stream ends.
+                const m = accumulated.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/);
+                if (m) {
+                  const partial = m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+                  send("partial", { text: partial });
+                }
+              }
+            } catch {
+              // ignore unparseable SSE fragments (keep-alives, comments, etc.)
+            }
+          }
+        }
+
+        const parsed = extractJson(accumulated);
+        send("final", { ok: true, model, ...parsed });
+        res.end();
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (e.truncated) { wasTruncated = true; break; }
+        if (e.status === 400) {
+          send("final", { ok: false, reply: "Request format mein dikkat thi. Phir se try karo.", files: [], error: e.message });
+          res.end();
+          return;
+        }
+        if (e.status === 429 || e.status >= 500) { await sleep(600 * (attempt + 1)); continue; }
+        break;
+      }
+    }
+  }
+
+  if (wasTruncated) {
+    send("final", {
+      ok: false,
+      reply: "Response bahut bada tha aur beech mein kat gaya. Chhote steps mein banwao.",
+      files: [],
+      error: lastErr ? lastErr.message : "truncated",
+    });
+  } else {
+    send("final", {
+      ok: false,
+      reply: "Sab free models abhi busy/rate-limited hain. Thoda ruk ke phir try karo (30-60 sec).",
+      files: [],
+      error: lastErr ? lastErr.message : "unknown error",
+    });
+  }
+  res.end();
+}
+
+let apiKey_GLOBAL = null; // set per-request in the handler below; module-scope needed for the stream helper above
 
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -118,9 +264,10 @@ module.exports = async (req, res) => {
   if (!apiKey) {
     return res.status(500).json({ error: "Server misconfigured: OPENROUTER_API_KEY missing" });
   }
+  apiKey_GLOBAL = apiKey;
 
   try {
-    const { messages, summary, fileContext } = req.body || {};
+    const { messages, summary, fileContext, stream } = req.body || {};
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: "messages array required" });
     }
@@ -146,6 +293,10 @@ module.exports = async (req, res) => {
     const recent = messages.slice(-6);
     chatMessages.push(...recent);
 
+    if (stream) {
+      return handleStreamingRequest(res, chatMessages);
+    }
+
     let lastErr = null;
     let wasTruncated = false;
     for (const model of MODEL_CHAIN) {
@@ -160,12 +311,21 @@ module.exports = async (req, res) => {
             wasTruncated = true;
             break; // retrying the same prompt/model won't fix a token-budget cutoff
           }
+          if (e.status === 400) {
+            // Malformed request — won't succeed on any model, stop immediately.
+            return res.status(200).json({
+              ok: false,
+              reply: "Request format mein dikkat thi. Phir se try karo, ya chhota message bhejo.",
+              files: [],
+              error: e.message,
+            });
+          }
           // rate limit or server error -> retry once, then move to next model
           if (e.status === 429 || e.status >= 500) {
             await sleep(600 * (attempt + 1));
             continue;
           }
-          // JSON parse errors etc -> try next model directly
+          // other errors (e.g. JSON parse) -> try next model directly
           break;
         }
       }
