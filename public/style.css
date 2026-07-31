@@ -301,6 +301,19 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   margin: 6px 14px;
   display: flex;
   flex-direction: column;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.msg.user.pressing {
+  background: var(--bg-elev-3);
+  transform: scale(0.98);
+}
+.msg.user.editing {
+  max-width: 92%;
+  width: 92%;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--icon-accent);
 }
 .msg-content-plain {
   white-space: pre-wrap;
@@ -310,6 +323,40 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   color: var(--text-faint);
   margin-top: 4px;
   text-align: right;
+}
+.edit-msg-textarea {
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 14.5px;
+  font-family: inherit;
+  line-height: 1.45;
+  resize: none;
+  padding: 0;
+  user-select: text;
+}
+.edit-msg-textarea:focus { outline: none; }
+.edit-msg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.edit-msg-btn {
+  padding: 7px 14px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border: none;
+}
+.edit-msg-btn.cancel {
+  background: none;
+  color: var(--text-dim);
+}
+.edit-msg-btn.save {
+  background: var(--accent-2);
+  color: #000;
 }
 
 /* BOT message: full-width panel, no bubble */
@@ -531,6 +578,9 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
 }
 .msg-action-btn.active-dislike {
   color: var(--danger);
+}
+.msg-action-btn.retry-btn {
+  color: var(--icon-accent);
 }
 
 /* MARKDOWN CONTENT (bot replies) */
