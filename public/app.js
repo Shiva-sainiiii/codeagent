@@ -19,6 +19,7 @@ const ICON = {
   diff: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="9"/><line x1="9" y1="6" x2="15" y2="6"/><line x1="12" y1="15" x2="12" y2="21"/><line x1="9" y1="18" x2="15" y2="18"/><line x1="3" y1="12" x2="21" y2="12"/></svg>`,
   undo: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`,
   mic: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`,
+  code: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
 };
 
 // ---------- STATE ----------
@@ -521,6 +522,7 @@ function renderFileList() {
           ${showDiffUndo ? `<button class="mini-btn" data-action="diff" data-path="${escapeAttr(path)}">${ICON.diff}</button>` : ""}
           ${showDiffUndo ? `<button class="mini-btn" data-action="undo" data-path="${escapeAttr(path)}">${ICON.undo}</button>` : ""}
           <button class="mini-btn" data-action="preview" data-path="${escapeAttr(path)}">${ICON.eye}</button>
+          <button class="mini-btn" data-action="code" data-path="${escapeAttr(path)}">${ICON.code}</button>
           <button class="mini-btn" data-action="copy" data-path="${escapeAttr(path)}">${ICON.copy}</button>
           <button class="mini-btn" data-action="download" data-path="${escapeAttr(path)}">${ICON.download}</button>
           <button class="mini-btn danger" data-action="delete" data-path="${escapeAttr(path)}">${ICON.trash}</button>
@@ -548,6 +550,9 @@ function renderFileList() {
 
   list.querySelectorAll('[data-action="preview"]').forEach((el) =>
     el.addEventListener("click", () => openPreviewModal(el.dataset.path))
+  );
+  list.querySelectorAll('[data-action="code"]').forEach((el) =>
+    el.addEventListener("click", () => openCodeViewModal(el.dataset.path))
   );
   list.querySelectorAll('[data-action="copy"]').forEach((el) =>
     el.addEventListener("click", () => copyFileContent(el.dataset.path))
@@ -651,6 +656,25 @@ document.addEventListener('click', function(e) {
   return out;
 }
 
+// Finds an HTML file in the project that actually references the given CSS/JS path,
+// so previewing a non-HTML file shows the real page it belongs to instead of either
+// crashing (raw JS with no DOM to attach to) or a fake sample page (CSS alone).
+function findHtmlUsingAsset(assetPath) {
+  const htmlFiles = Object.keys(currentFiles).filter((p) => /\.html?$/i.test(p));
+  const assetName = assetPath.split("/").pop();
+  for (const htmlPath of htmlFiles) {
+    const html = currentFiles[htmlPath];
+    // cheap check: does this HTML reference the asset by filename (handles relative paths
+    // like "./style.css", "../shared/script.js", etc. without needing full resolution here)
+    if (html.includes(assetName)) {
+      const resolved = resolveRelativePath(htmlPath, assetName);
+      // confirm it actually resolves to this exact asset, not a same-named file elsewhere
+      if (resolved === assetPath || html.includes(assetPath)) return htmlPath;
+    }
+  }
+  return null;
+}
+
 function openPreviewModal(path) {
   const content = currentFiles[path];
   if (content === undefined) return showToast("File not found");
@@ -659,29 +683,28 @@ function openPreviewModal(path) {
 
   if (ext === "html") {
     srcDoc = inlineProjectAssets(path, content);
-  } else if (ext === "css") {
-    srcDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-      body { font-family: -apple-system, sans-serif; margin: 0; padding: 16px; color: #222; }
-      .preview-note { font-size: 12px; color: #888; margin-bottom: 12px; font-family: monospace; }
-      ${content}
-    </style></head><body>
-      <div class="preview-note">CSS preview — pair with an HTML file to see it fully applied.</div>
-      <h1>Heading</h1>
-      <p>Paragraph text to preview typography.</p>
-      <button>Button</button>
-    </body></html>`;
-  } else if (ext === "js") {
-    srcDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-      <body style="background:#0d1117;color:#7ee787;font-family:monospace;padding:16px;margin:0;font-size:13px;white-space:pre-wrap;">
-      <div id="output"></div>
-      <script>
-        const log = document.getElementById('output');
-        const origLog = console.log;
-        console.log = (...args) => { log.innerHTML += args.join(' ') + '\\n'; origLog(...args); };
-        try { ${content} } catch(e) { log.innerHTML += 'Error: ' + e.message; }
-      <\/script></body></html>`;
+  } else if (ext === "css" || ext === "js") {
+    const hostHtml = findHtmlUsingAsset(path);
+    if (hostHtml) {
+      // Show the real page this file belongs to — this is what the user actually wants
+      // to see when they tap "preview" on a CSS/JS file: its effect in context.
+      srcDoc = inlineProjectAssets(hostHtml, currentFiles[hostHtml]);
+      $("previewFileName").textContent = `${path} — via ${hostHtml}`;
+      $("previewFrame").srcdoc = srcDoc;
+      const modal = $("previewModal");
+      modal.dataset.currentPath = path;
+      modal.classList.remove("hidden");
+      requestAnimationFrame(() => modal.classList.add("show"));
+      return;
+    }
+    // No HTML in the project uses this file — running raw JS standalone would crash on
+    // any DOM access (getElementById, addEventListener, etc. all return null with nothing
+    // to attach to), so show a read-only code view instead of pretending to execute it.
+    openCodeViewModal(path);
+    return;
   } else {
-    srcDoc = `<!DOCTYPE html><html><body style="margin:0;padding:16px;background:#0d1117;color:#d4e2f0;font-family:monospace;font-size:13px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(content)}</body></html>`;
+    openCodeViewModal(path);
+    return;
   }
 
   $("previewFileName").textContent = path;
@@ -696,6 +719,61 @@ function closePreviewModal() {
   const modal = $("previewModal");
   modal.classList.remove("show");
   setTimeout(() => modal.classList.add("hidden"), 220);
+}
+
+// ---------- CODE VIEW / MANUAL EDIT ----------
+// Used for files that can't be meaningfully live-previewed (JS with no host HTML, JSON,
+// config files, etc.) and doubles as a manual-edit escape hatch — not everything needs
+// to go through the AI; sometimes a quick manual fix is faster and costs zero tokens.
+function openCodeViewModal(path) {
+  const content = currentFiles[path];
+  if (content === undefined) return showToast("File not found");
+  $("codeViewFileName").textContent = path;
+  $("codeViewTextarea").value = content;
+  $("codeViewTextarea").dataset.originalContent = content;
+  $("codeViewTextarea").dataset.path = path;
+  setCodeViewEditing(false);
+  const modal = $("codeViewModal");
+  modal.classList.remove("hidden");
+  requestAnimationFrame(() => modal.classList.add("show"));
+}
+function closeCodeViewModal() {
+  const modal = $("codeViewModal");
+  const textarea = $("codeViewTextarea");
+  if (!textarea.readOnly && textarea.value !== textarea.dataset.originalContent) {
+    // there are unsaved edits — this is handled by the Save/Cancel buttons, not silently
+    // discarded, so just closing without saving is treated as an explicit cancel here.
+  }
+  modal.classList.remove("show");
+  setTimeout(() => modal.classList.add("hidden"), 220);
+}
+function setCodeViewEditing(editing) {
+  const textarea = $("codeViewTextarea");
+  textarea.readOnly = !editing;
+  $("codeViewEditBtn").classList.toggle("hidden", editing);
+  $("codeViewSaveBtn").classList.toggle("hidden", !editing);
+  $("codeViewCancelEditBtn").classList.toggle("hidden", !editing);
+  textarea.classList.toggle("editing", editing);
+}
+function saveCodeViewEdit() {
+  const textarea = $("codeViewTextarea");
+  const path = textarea.dataset.path;
+  const before = currentFiles[path];
+  const after = textarea.value;
+  if (before !== after) {
+    recordFileSnapshot(currentProjectId, path, before, "manual edit");
+    currentFiles[path] = after;
+    saveProjectFiles(currentProjectId, currentFiles);
+    renderFileList();
+    showToast(`${path} saved`);
+  }
+  textarea.dataset.originalContent = after;
+  setCodeViewEditing(false);
+}
+function cancelCodeViewEdit() {
+  const textarea = $("codeViewTextarea");
+  textarea.value = textarea.dataset.originalContent;
+  setCodeViewEditing(false);
 }
 
 // Multi-page preview: when a link inside the preview iframe points to another HTML file
@@ -897,10 +975,12 @@ function appendMsgToDom(role, content, fileChips, meta) {
         <div class="file-chip-actions">
           ${showDiffUndo ? `<button class="chip-action-btn" data-action="diff" title="View changes">${ICON.diff}</button>` : ""}
           ${showDiffUndo ? `<button class="chip-action-btn" data-action="undo" title="Undo this edit">${ICON.undo}</button>` : ""}
+          <button class="chip-action-btn" data-action="code" title="View/edit code">${ICON.code}</button>
           <button class="chip-action-btn" data-action="copy" title="Copy">${ICON.copy}</button>
           <button class="chip-action-btn" data-action="download" title="Download">${ICON.download}</button>
         </div>`;
       row.querySelector('[data-action="open"]').addEventListener("click", () => openPreviewModal(path));
+      row.querySelector('[data-action="code"]').addEventListener("click", () => openCodeViewModal(path));
       row.querySelector('[data-action="copy"]').addEventListener("click", () => copyFileContent(path));
       row.querySelector('[data-action="download"]').addEventListener("click", () => downloadFile(path));
       const diffBtn = row.querySelector('[data-action="diff"]');
@@ -1044,7 +1124,11 @@ function pushStatus(text) {
   $("emptyState").classList.add("hidden");
   statusEl = document.createElement("div");
   statusEl.className = "msg status";
-  statusEl.innerHTML = `<span class="status-spinner"></span><span class="status-text">${escapeHtml(text)}</span>`;
+  const isFileOp = /^(Creating|Editing|Created|Updated|Edit skipped)/.test(text);
+  const textHtml = isFileOp
+    ? `${ICON.file}<span>${escapeHtml(text)}</span>`
+    : escapeHtml(text);
+  statusEl.innerHTML = `<span class="status-spinner"></span><span class="status-text${isFileOp ? " status-file-op" : ""}">${textHtml}</span>`;
   log.appendChild(statusEl);
   log.scrollTop = log.scrollHeight;
   return statusEl;
@@ -1056,7 +1140,11 @@ function updateStatus(text, done = false) {
     return;
   }
   const textEl = statusEl.querySelector(".status-text");
-  if (textEl) textEl.textContent = text;
+  if (textEl) {
+    const isFileOp = /^(Creating|Editing|Created|Updated|Edit skipped)/.test(text);
+    textEl.innerHTML = isFileOp ? `${ICON.file}<span>${text}</span>` : escapeHtml(text);
+    textEl.classList.toggle("status-file-op", isFileOp);
+  }
   if (done) {
     statusEl.classList.add("done");
     const spinner = statusEl.querySelector(".status-spinner");
@@ -1397,15 +1485,18 @@ async function sendMessage() {
     if (filesToApply.length) {
       let anyEditFailed = false;
       for (const f of filesToApply) {
-        const verb = f.action === "edit" ? "Editing" : "Creating";
-        updateStatus(`${verb} ${f.path}...`);
-        await sleep(300);
+        const isNewFile = !(f.path in currentFiles) || f.action === "create";
+        const verb = isNewFile ? "Creating" : "Editing";
+        updateStatus(`${verb} ${escapeHtml(f.path)}...`);
+        await sleep(500); // long enough to actually read, not just flash past
         const result = applyFileOps([f]);
         if (result.failed.length) anyEditFailed = true;
+        const doneVerb = isNewFile ? "Created" : "Updated";
         const label = result.failed.length
-          ? `Edit skipped (no match): ${f.path}`
-          : `${f.action === "edit" ? "Updated" : "Created"} ${f.path}`;
+          ? `Edit skipped (no match): ${escapeHtml(f.path)}`
+          : `${doneVerb} ${escapeHtml(f.path)}`;
         updateStatus(label);
+        await sleep(250); // brief pause on the completed state too, before moving to the next file
       }
       finishStatus(anyEditFailed ? "Done — with a skipped edit" : "Done");
       renderFileList();
@@ -1735,6 +1826,10 @@ $("filesBtn").addEventListener("click", openFilesPanel);
 $("filesOverlay").addEventListener("click", closeFilesPanel);
 $("closePreviewBtn").addEventListener("click", closePreviewModal);
 $("closeDiffBtn").addEventListener("click", closeDiffModal);
+$("closeCodeViewBtn").addEventListener("click", closeCodeViewModal);
+$("codeViewEditBtn").addEventListener("click", () => setCodeViewEditing(true));
+$("codeViewSaveBtn").addEventListener("click", saveCodeViewEdit);
+$("codeViewCancelEditBtn").addEventListener("click", cancelCodeViewEdit);
 $("previewRefreshBtn").addEventListener("click", () => {
   const path = $("previewModal").dataset.currentPath;
   if (path) openPreviewModal(path);
