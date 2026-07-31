@@ -1504,7 +1504,21 @@ function closeFilesPanel() {
 function autoResize() {
   const el = $("chatInput");
   el.style.height = "auto";
-  el.style.height = Math.min(el.scrollHeight, 100) + "px";
+  el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  updateSendMicToggle();
+}
+
+function updateSendMicToggle() {
+  const hasText = $("chatInput").value.trim().length > 0;
+  const micBtn = $("micBtn");
+  const sendBtn = $("sendBtn");
+  if (hasText) {
+    sendBtn.classList.remove("hidden-btn");
+    if (!micBtn.classList.contains("unsupported")) micBtn.style.display = "none";
+  } else {
+    sendBtn.classList.add("hidden-btn");
+    if (!micBtn.classList.contains("unsupported")) micBtn.style.display = "flex";
+  }
 }
 
 // ---------- VOICE INPUT ----------
@@ -1728,6 +1742,25 @@ $("importFolderInput").addEventListener("change", (e) => {
   e.target.value = "";
 });
 $("attachBtn").addEventListener("click", () => $("attachInput").click());
+
+document.querySelectorAll("[data-shortcut]").forEach((card) => {
+  card.addEventListener("click", () => {
+    const kind = card.dataset.shortcut;
+    if (kind === "template") {
+      openTemplatePicker();
+    } else if (kind === "upload") {
+      $("attachInput").click();
+    } else if (kind === "discuss") {
+      $("chatInput").value = "Mera project idea hai — ";
+      $("chatInput").focus();
+      autoResize();
+    } else if (kind === "fix") {
+      $("chatInput").value = "Is code mein bug hai — ";
+      $("chatInput").focus();
+      autoResize();
+    }
+  });
+});
 $("attachInput").addEventListener("change", (e) => {
   handleImportedFileList(e.target.files);
   e.target.value = "";
@@ -1740,6 +1773,7 @@ $("chatInput").addEventListener("keydown", (e) => {
   }
 });
 $("chatInput").addEventListener("input", autoResize);
+updateSendMicToggle();
 
 // ---------- INIT ----------
 (function init() {
