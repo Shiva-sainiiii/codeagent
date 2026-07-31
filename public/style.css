@@ -826,11 +826,12 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
 #chatInput::placeholder { color: var(--text-faint); }
 
 .attach-btn, .mic-btn {
-  width: 34px; height: 34px;
+  width: 42px; height: 42px;
   border-radius: 50%;
   background: none;
   border: none;
   color: var(--icon-accent);
+  font-size: 22px;
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   transition: color 0.15s ease, background 0.15s ease;
@@ -849,10 +850,11 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
 .mic-btn.unsupported { display: none; }
 
 .send-btn {
-  width: 34px; height: 34px;
+  width: 42px; height: 42px;
   border-radius: 50%;
   background: var(--accent-2);
   color: #000;
+  font-size: 19px;
   border: none;
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -861,6 +863,10 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
 .send-btn:active { transform: scale(0.9); }
 .send-btn:disabled { opacity: 0.3; }
 .send-btn.hidden-btn { display: none; }
+.send-btn.sending {
+  background: var(--bg-elev-3);
+  color: var(--danger);
+}
 
 .attached-files-row {
   display: flex;
