@@ -1641,7 +1641,7 @@ async function handleImportedFileList(fileList) {
   const capped = usable.slice(0, MAX_IMPORT_TOTAL_FILES);
   const skippedCap = usable.length - capped.length;
 
-  addSystemMsg(`Importing ${capped.length} file(s)...`);
+  const progressCard = addImportCard({ status: "importing", count: capped.length });
 
   const imported = [];
   let skippedTooBig = 0;
@@ -1664,6 +1664,7 @@ async function handleImportedFileList(fileList) {
   }
 
   if (!imported.length) {
+    progressCard.remove();
     addSystemMsg("Koi readable text file nahi mili import karne ke liye.");
     return;
   }
@@ -1675,23 +1676,56 @@ async function handleImportedFileList(fileList) {
   renderFileList();
   $("projectSub").textContent = `${Object.keys(currentFiles).length} files`;
 
-  // One consolidated system note in chat — this is what keeps it token-efficient: the AI
-  // only needs to be told once what arrived. Full content already lives in currentFiles and
+  // One consolidated card in chat — this is what keeps it token-efficient: the AI only
+  // needs to be told once what arrived. Full content already lives in currentFiles and
   // flows through buildFileContext() on the next message, same as any other project file,
   // so we don't duplicate the content again here in the chat log itself.
-  const list = imported.map((f) => f.path).join("\n");
-  let note = `Imported ${imported.length} file(s):\n${list}`;
   const extras = [];
   if (skippedBinary) extras.push(`${skippedBinary} binary file(s) skipped`);
   if (skippedCap) extras.push(`${skippedCap} file(s) skipped (import limit is ${MAX_IMPORT_TOTAL_FILES} per batch)`);
   if (skippedTooBig) extras.push(`${skippedTooBig} file(s) skipped (too large, over ~30k chars)`);
-  if (extras.length) note += `\n(${extras.join(", ")})`;
   const hasJsxOrTs = imported.some((f) => /\.(jsx|tsx|ts)$/i.test(f.path));
-  if (hasJsxOrTs) {
-    note += `\n\nNote: .jsx/.tsx/.ts files won't run directly in Preview (no build step here) — ask the AI to convert to plain HTML/CSS/JS if you want to preview it live.`;
-  }
-  addSystemMsg(note);
+  if (hasJsxOrTs) extras.push(`.jsx/.tsx/.ts won't preview live without conversion`);
+
+  progressCard.remove();
+  addImportCard({ status: "done", files: imported.map((f) => f.path), extras });
   showToast(`${imported.length} file(s) imported`);
+}
+
+// Left-aligned import status card — icon + file list, instead of centered plain text.
+// Visually matches the file-chip pattern already used for AI-generated files, so an
+// import looks like "here's what arrived" rather than a generic system notice.
+function addImportCard({ status, count, files, extras }) {
+  const log = $("chatLog");
+  $("emptyState").classList.add("hidden");
+  const div = document.createElement("div");
+  div.className = "msg import-card";
+
+  if (status === "importing") {
+    div.innerHTML = `
+      <div class="import-card-header">
+        <span class="status-spinner"></span>
+        <span>Importing ${count} file${count === 1 ? "" : "s"}...</span>
+      </div>`;
+  } else {
+    const fileRows = files.map((p) => `
+      <div class="import-card-file">${ICON.file}<span>${escapeHtml(p)}</span></div>
+    `).join("");
+    const extrasHtml = extras && extras.length
+      ? `<div class="import-card-extras">${extras.map((e) => escapeHtml(e)).join(" · ")}</div>`
+      : "";
+    div.innerHTML = `
+      <div class="import-card-header">
+        <span class="status-check">${ICON.check}</span>
+        <span>Imported ${files.length} file${files.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="import-card-files">${fileRows}</div>
+      ${extrasHtml}`;
+  }
+
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
 }
 
 // ---------- EVENT WIRING ----------
