@@ -83,14 +83,34 @@
 
     <!-- TEMPLATE PICKER (shown when creating a new project) -->
     <div id="templatePickerOverlay" class="modal-overlay hidden">
-      <div class="modal-box">
+      <div class="modal-box template-modal-box">
         <h3 class="modal-title">Start from</h3>
         <p class="modal-message">Blank project, ya ek starter template — bina AI call ke turant shuru ho jayega.</p>
-        <div class="import-picker-actions" id="templateList">
-          <button class="modal-btn modal-btn-import" data-template="blank">Blank</button>
-          <button class="modal-btn modal-btn-import" data-template="landing">Landing Page</button>
-          <button class="modal-btn modal-btn-import" data-template="calculator">Calculator</button>
-          <button class="modal-btn modal-btn-import" data-template="todo">To-Do List</button>
+        <div class="template-grid" id="templateList">
+          <button class="template-card" data-template="blank">
+            <span class="template-card-icon">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+            </span>
+            <span class="template-card-label">Blank</span>
+          </button>
+          <button class="template-card" data-template="landing">
+            <span class="template-card-icon">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="9" y1="16" x2="15" y2="16"/></svg>
+            </span>
+            <span class="template-card-label">Landing Page</span>
+          </button>
+          <button class="template-card" data-template="calculator">
+            <span class="template-card-icon">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="11" x2="8" y2="11.01"/><line x1="12" y1="11" x2="12" y2="11.01"/><line x1="16" y1="11" x2="16" y2="11.01"/><line x1="8" y1="15" x2="8" y2="15.01"/><line x1="12" y1="15" x2="12" y2="15.01"/><line x1="16" y1="15" x2="16" y2="15.01"/></svg>
+            </span>
+            <span class="template-card-label">Calculator</span>
+          </button>
+          <button class="template-card" data-template="todo">
+            <span class="template-card-icon">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 20 6"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/></svg>
+            </span>
+            <span class="template-card-label">To-Do List</span>
+          </button>
         </div>
         <div class="modal-actions">
           <button id="templatePickerCancelBtn" class="modal-btn modal-btn-cancel">Cancel</button>
