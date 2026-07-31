@@ -141,6 +141,11 @@
 
     <!-- INPUT BAR -->
     <footer class="input-bar">
+      <button id="attachBtn" class="attach-btn" aria-label="Attach files">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95L9.41 17.41a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49"/></svg>
+      </button>
+      <input type="file" id="attachInput" multiple hidden
+        accept=".js,.jsx,.ts,.tsx,.html,.htm,.css,.json,.md,.txt,.py,.java,.c,.cpp,.h,.go,.rs,.php,.rb,.sql,.yml,.yaml,.xml,.svg,image/*,.pdf" />
       <div class="input-wrap">
         <textarea id="chatInput" placeholder="Message... (Hinglish chalega)" rows="1"></textarea>
         <button id="micBtn" class="mic-btn" aria-label="Voice input">
