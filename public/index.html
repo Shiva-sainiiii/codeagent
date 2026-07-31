@@ -81,6 +81,23 @@
       </div>
     </div>
 
+    <!-- TEMPLATE PICKER (shown when creating a new project) -->
+    <div id="templatePickerOverlay" class="modal-overlay hidden">
+      <div class="modal-box">
+        <h3 class="modal-title">Start from</h3>
+        <p class="modal-message">Blank project, ya ek starter template — bina AI call ke turant shuru ho jayega.</p>
+        <div class="import-picker-actions" id="templateList">
+          <button class="modal-btn modal-btn-import" data-template="blank">Blank</button>
+          <button class="modal-btn modal-btn-import" data-template="landing">Landing Page</button>
+          <button class="modal-btn modal-btn-import" data-template="calculator">Calculator</button>
+          <button class="modal-btn modal-btn-import" data-template="todo">To-Do List</button>
+        </div>
+        <div class="modal-actions">
+          <button id="templatePickerCancelBtn" class="modal-btn modal-btn-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <!-- FULL-SCREEN LIVE PREVIEW -->
     <div id="previewModal" class="preview-modal hidden">
       <div class="preview-modal-header">
@@ -99,6 +116,19 @@
       </div>
     </div>
 
+    <!-- DIFF VIEW MODAL -->
+    <div id="diffModal" class="preview-modal hidden">
+      <div class="preview-modal-header">
+        <span id="diffFileName" class="preview-filename">Changes</span>
+        <div class="preview-modal-actions">
+          <button id="closeDiffBtn" class="icon-btn small" aria-label="Close">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="diffContent" class="diff-content"></div>
+    </div>
+
     <!-- CHAT AREA -->
     <main id="chatArea" class="chat-area">
       <div id="chatLog" class="chat-log">
@@ -113,6 +143,9 @@
     <footer class="input-bar">
       <div class="input-wrap">
         <textarea id="chatInput" placeholder="Message... (Hinglish chalega)" rows="1"></textarea>
+        <button id="micBtn" class="mic-btn" aria-label="Voice input">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
       </div>
       <button id="sendBtn" class="send-btn" aria-label="Send">
         <svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.6 22 12 3.4 3.4 3 10l13 2-13 2z"/></svg>

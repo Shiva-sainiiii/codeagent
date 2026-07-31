@@ -16,6 +16,9 @@ const ICON = {
   warning: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
   folder: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2Z"/></svg>`,
   wave: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v0a2 2 0 0 0-4 0v0a2 2 0 0 0-4 0v6a8 8 0 0 0 8 8h1a7 7 0 0 0 7-7v-1a2 2 0 0 0-4 0Z"/></svg>`,
+  diff: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="9"/><line x1="9" y1="6" x2="15" y2="6"/><line x1="12" y1="15" x2="12" y2="21"/><line x1="9" y1="18" x2="15" y2="18"/><line x1="3" y1="12" x2="21" y2="12"/></svg>`,
+  undo: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`,
+  mic: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`,
 };
 
 // ---------- STATE ----------
@@ -97,8 +100,265 @@ function saveChat(id, messages, summary) {
   localStorage.setItem(`chat:${id}`, JSON.stringify({ messages, summary }));
 }
 
+// ---------- FILE VERSION HISTORY (undo/redo + diff view) ----------
+// Keeps the last N snapshots of each file's content, separate from the live project save,
+// so a bad AI edit can be undone and so we can show a real before/after diff. Capped small
+// per file to keep localStorage usage sane on a phone.
+const MAX_HISTORY_PER_FILE = 5;
+
+function loadFileHistory(projectId) {
+  const raw = localStorage.getItem(`history:${projectId}`);
+  return safeParse(raw, {}); // { path: [ {content, ts, label}, ... ] } oldest-first
+}
+function saveFileHistory(projectId, history) {
+  localStorage.setItem(`history:${projectId}`, JSON.stringify(history));
+}
+
+// Call this BEFORE overwriting a file's content, so the pre-change version is preserved.
+function recordFileSnapshot(projectId, path, previousContent, label) {
+  if (previousContent === undefined) return; // brand-new file — nothing to snapshot
+  const history = loadFileHistory(projectId);
+  if (!history[path]) history[path] = [];
+  history[path].push({ content: previousContent, ts: Date.now(), label: label || "edit" });
+  if (history[path].length > MAX_HISTORY_PER_FILE) {
+    history[path] = history[path].slice(-MAX_HISTORY_PER_FILE);
+  }
+  saveFileHistory(projectId, history);
+}
+
+function undoFileChange(path) {
+  const history = loadFileHistory(currentProjectId);
+  const stack = history[path];
+  if (!stack || !stack.length) return false;
+  const previous = stack.pop();
+  // push current (about to be replaced) content onto a redo stack so it's recoverable
+  const redoKey = `redo:${currentProjectId}`;
+  const redoHistory = safeParse(localStorage.getItem(redoKey), {});
+  if (!redoHistory[path]) redoHistory[path] = [];
+  redoHistory[path].push({ content: currentFiles[path], ts: Date.now(), label: "redo-point" });
+  localStorage.setItem(redoKey, JSON.stringify(redoHistory));
+
+  currentFiles[path] = previous.content;
+  saveFileHistory(currentProjectId, history);
+  saveProjectFiles(currentProjectId, currentFiles);
+  return true;
+}
+
+function redoFileChange(path) {
+  const redoKey = `redo:${currentProjectId}`;
+  const redoHistory = safeParse(localStorage.getItem(redoKey), {});
+  const stack = redoHistory[path];
+  if (!stack || !stack.length) return false;
+  const next = stack.pop();
+  recordFileSnapshot(currentProjectId, path, currentFiles[path], "undo-point");
+  currentFiles[path] = next.content;
+  localStorage.setItem(redoKey, JSON.stringify(redoHistory));
+  saveProjectFiles(currentProjectId, currentFiles);
+  return true;
+}
+
+function hasHistory(path) {
+  const history = loadFileHistory(currentProjectId);
+  return !!(history[path] && history[path].length);
+}
+
+// ---------- SIMPLE LINE-BASED DIFF (for the diff view, no external library) ----------
+// Implements a basic LCS-based line diff — good enough for showing added/removed lines
+// in a code file without pulling in a diff library (keeps the app dependency-light).
+function computeLineDiff(oldText, newText) {
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  const m = oldLines.length, n = newLines.length;
+
+  // LCS table
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = oldLines[i] === newLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  const result = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (oldLines[i] === newLines[j]) {
+      result.push({ type: "same", text: oldLines[i] });
+      i++; j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      result.push({ type: "removed", text: oldLines[i] });
+      i++;
+    } else {
+      result.push({ type: "added", text: newLines[j] });
+      j++;
+    }
+  }
+  while (i < m) { result.push({ type: "removed", text: oldLines[i] }); i++; }
+  while (j < n) { result.push({ type: "added", text: newLines[j] }); j++; }
+  return result;
+}
+
 function genId() {
   return "p_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// ---------- PROJECT TEMPLATES ----------
+// Instant-start starting points that need zero LLM calls — pure token savings for the
+// most common "give me a blank X to build on" requests.
+const TEMPLATES = {
+  blank: { label: "Blank", files: {} },
+  landing: {
+    label: "Landing Page",
+    files: {
+      "index.html": `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>My Landing Page</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="hero">
+    <h1>Welcome</h1>
+    <p>Your headline goes here.</p>
+    <button id="ctaBtn">Get Started</button>
+  </header>
+</body>
+</html>`,
+      "style.css": `* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, sans-serif; }
+.hero {
+  min-height: 100vh;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 24px;
+  background: linear-gradient(135deg, #6c5ce7, #8b7cf6);
+  color: white;
+}
+.hero h1 { font-size: 2.5rem; margin-bottom: 12px; }
+.hero p { font-size: 1.1rem; opacity: 0.9; margin-bottom: 24px; }
+.hero button {
+  padding: 12px 28px; border-radius: 999px; border: none;
+  background: white; color: #6c5ce7; font-weight: 600; font-size: 1rem;
+}`,
+      "script.js": `document.getElementById('ctaBtn').addEventListener('click', () => {
+  alert('Clicked!');
+});`,
+    },
+  },
+  calculator: {
+    label: "Calculator",
+    files: {
+      "index.html": `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Calculator</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="calc">
+    <div class="display" id="display">0</div>
+    <div class="keys" id="keys">
+      <button data-key="C" class="op">C</button>
+      <button data-key="/" class="op">÷</button>
+      <button data-key="*" class="op">×</button>
+      <button data-key="Backspace" class="op">⌫</button>
+      <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button><button data-key="-" class="op">-</button>
+      <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button><button data-key="+" class="op">+</button>
+      <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button><button data-key="=" class="eq" rowspan="2">=</button>
+      <button data-key="0" class="zero">0</button><button data-key=".">.</button>
+    </div>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>`,
+      "style.css": `* { margin: 0; padding: 0; box-sizing: border-box; }
+body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #12141f; font-family: -apple-system, sans-serif; }
+.calc { width: 320px; background: #191c2b; border-radius: 20px; padding: 16px; }
+.display { color: white; font-size: 2.5rem; text-align: right; padding: 20px 10px; word-break: break-all; }
+.keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.keys button { padding: 18px 0; border-radius: 12px; border: none; background: #262a42; color: white; font-size: 1.2rem; }
+.keys button.op { background: #6c5ce7; color: white; }
+.keys button.eq { background: #f0b429; grid-row: span 2; }
+.keys button.zero { grid-column: span 2; }`,
+      "script.js": `let expr = '';
+const display = document.getElementById('display');
+document.getElementById('keys').addEventListener('click', (e) => {
+  const key = e.target.dataset.key;
+  if (!key) return;
+  if (key === 'C') expr = '';
+  else if (key === 'Backspace') expr = expr.slice(0, -1);
+  else if (key === '=') {
+    try { expr = String(Function('"use strict";return (' + expr + ')')()); }
+    catch { expr = 'Error'; }
+  } else expr += key;
+  display.textContent = expr || '0';
+});`,
+    },
+  },
+  todo: {
+    label: "To-Do List",
+    files: {
+      "index.html": `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>To-Do List</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <h1>My Tasks</h1>
+    <div class="input-row">
+      <input id="taskInput" placeholder="Add a task..." />
+      <button id="addBtn">Add</button>
+    </div>
+    <ul id="taskList"></ul>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>`,
+      "style.css": `* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, sans-serif; background: #0a0b12; color: #eceef5; min-height: 100vh; }
+.app { max-width: 420px; margin: 40px auto; padding: 20px; }
+h1 { margin-bottom: 16px; }
+.input-row { display: flex; gap: 8px; margin-bottom: 20px; }
+.input-row input { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #333; background: #191c2b; color: white; }
+.input-row button { padding: 10px 16px; border-radius: 8px; border: none; background: #6c5ce7; color: white; }
+#taskList { list-style: none; }
+#taskList li { display: flex; justify-content: space-between; padding: 10px; background: #191c2b; border-radius: 8px; margin-bottom: 8px; }
+#taskList li.done span { text-decoration: line-through; opacity: 0.5; }
+#taskList li button { background: none; border: none; color: #ff6b6b; }`,
+      "script.js": `const list = document.getElementById('taskList');
+document.getElementById('addBtn').addEventListener('click', addTask);
+document.getElementById('taskInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTask(); });
+function addTask() {
+  const input = document.getElementById('taskInput');
+  const text = input.value.trim();
+  if (!text) return;
+  const li = document.createElement('li');
+  li.innerHTML = '<span>' + text + '</span><button>✕</button>';
+  li.querySelector('span').addEventListener('click', () => li.classList.toggle('done'));
+  li.querySelector('button').addEventListener('click', () => li.remove());
+  list.appendChild(li);
+  input.value = '';
+}`,
+    },
+  },
+};
+
+function createProjectFromTemplate(name, templateKey) {
+  const id = genId();
+  saveProjectMeta(id, { name: name || "Untitled Project", updatedAt: Date.now() });
+  const template = TEMPLATES[templateKey] || TEMPLATES.blank;
+  saveProjectFiles(id, { ...template.files });
+  saveChat(id, [], "");
+  switchProject(id);
+  if (Object.keys(template.files).length) {
+    addSystemMsg(`Started from the "${template.label}" template.`);
+  }
 }
 
 // ---------- CUSTOM MODAL (replaces window.prompt / confirm / alert) ----------
@@ -199,7 +459,7 @@ function deleteProject(id) {
     if (remaining.length) switchProject(remaining[0]);
     else {
       $("projectName").textContent = "No Project";
-      $("projectSub").textContent = "tap ☰ to switch";
+      $("projectSub").textContent = "tap menu to switch";
       currentFiles = {};
       currentChat = [];
       renderChatLog();
@@ -251,11 +511,15 @@ function renderFileList() {
     list.innerHTML = `<p style="color:var(--text-dim);font-size:13px;padding:10px;">Abhi koi file nahi hai.</p>`;
     return;
   }
-  list.innerHTML = paths.map((path) => `
+  list.innerHTML = paths.map((path) => {
+    const showDiffUndo = hasHistory(path);
+    return `
     <div class="file-item">
       <div class="file-item-top">
         <b>${escapeHtml(path)}</b>
         <div class="file-item-actions">
+          ${showDiffUndo ? `<button class="mini-btn" data-action="diff" data-path="${escapeAttr(path)}">${ICON.diff}</button>` : ""}
+          ${showDiffUndo ? `<button class="mini-btn" data-action="undo" data-path="${escapeAttr(path)}">${ICON.undo}</button>` : ""}
           <button class="mini-btn" data-action="preview" data-path="${escapeAttr(path)}">${ICON.eye}</button>
           <button class="mini-btn" data-action="copy" data-path="${escapeAttr(path)}">${ICON.copy}</button>
           <button class="mini-btn" data-action="download" data-path="${escapeAttr(path)}">${ICON.download}</button>
@@ -263,7 +527,24 @@ function renderFileList() {
         </div>
       </div>
     </div>
-  `).join("");
+  `;
+  }).join("");
+
+  list.querySelectorAll('[data-action="diff"]').forEach((el) =>
+    el.addEventListener("click", () => openDiffModal(el.dataset.path))
+  );
+  list.querySelectorAll('[data-action="undo"]').forEach((el) =>
+    el.addEventListener("click", async () => {
+      const ok = await showConfirm(`Undo the last change to "${el.dataset.path}"?`, "Undo Edit");
+      if (!ok) return;
+      if (undoFileChange(el.dataset.path)) {
+        renderFileList();
+        showToast(`${el.dataset.path} reverted`);
+      } else {
+        showToast("No earlier version found");
+      }
+    })
+  );
 
   list.querySelectorAll('[data-action="preview"]').forEach((el) =>
     el.addEventListener("click", () => openPreviewModal(el.dataset.path))
@@ -352,6 +633,21 @@ function inlineProjectAssets(htmlPath, htmlContent) {
 <\/script>`;
   out = out.replace(/<head[^>]*>/i, (m) => `${m}\n${storageShim}`);
 
+  // Multi-page support: if this HTML links to another HTML file in the project
+  // (e.g. <a href="about.html">), intercept clicks on it so the preview can navigate
+  // between project pages instead of failing (srcdoc has no real navigation target).
+  const navScript = `<script>
+document.addEventListener('click', function(e) {
+  var a = e.target.closest('a');
+  if (!a) return;
+  var href = a.getAttribute('href');
+  if (!href || /^https?:\\/\\//.test(href) || href.startsWith('#')) return;
+  e.preventDefault();
+  window.parent.postMessage({ type: 'codeagent-navigate', href: href, from: ${JSON.stringify(htmlPath)} }, '*');
+});
+<\/script>`;
+  out = out.replace(/<\/body>/i, `${navScript}</body>`);
+
   return out;
 }
 
@@ -398,6 +694,46 @@ function openPreviewModal(path) {
 
 function closePreviewModal() {
   const modal = $("previewModal");
+  modal.classList.remove("show");
+  setTimeout(() => modal.classList.add("hidden"), 220);
+}
+
+// Multi-page preview: when a link inside the preview iframe points to another HTML file
+// in this project, navigate the preview to it instead of doing nothing (srcdoc iframes
+// can't follow relative links on their own — see inlineProjectAssets' injected nav script).
+window.addEventListener("message", (e) => {
+  if (!e.data || e.data.type !== "codeagent-navigate") return;
+  const resolved = resolveRelativePath(e.data.from, e.data.href);
+  if (resolved && currentFiles[resolved] !== undefined) {
+    openPreviewModal(resolved);
+  } else {
+    showToast(`Page "${e.data.href}" not found in project`);
+  }
+});
+
+function openDiffModal(path) {
+  const history = loadFileHistory(currentProjectId);
+  const stack = history[path];
+  if (!stack || !stack.length) return showToast("No earlier version to compare");
+  const previous = stack[stack.length - 1];
+  const current = currentFiles[path] || "";
+  const diffLines = computeLineDiff(previous.content, current);
+
+  const html = diffLines.map((line) => {
+    const cls = line.type === "added" ? "diff-added" : line.type === "removed" ? "diff-removed" : "diff-same";
+    const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
+    return `<div class="diff-line ${cls}"><span class="diff-prefix">${prefix}</span><span class="diff-text">${escapeHtml(line.text)}</span></div>`;
+  }).join("");
+
+  $("diffFileName").textContent = path;
+  $("diffContent").innerHTML = html || `<p style="color:var(--text-dim);padding:10px;">No differences</p>`;
+  const modal = $("diffModal");
+  modal.dataset.currentPath = path;
+  modal.classList.remove("hidden");
+  requestAnimationFrame(() => modal.classList.add("show"));
+}
+function closeDiffModal() {
+  const modal = $("diffModal");
   modal.classList.remove("show");
   setTimeout(() => modal.classList.add("hidden"), 220);
 }
@@ -550,20 +886,36 @@ function appendMsgToDom(role, content, fileChips, meta) {
   }
   div.appendChild(contentEl);
 
-  // file chips (with inline download/copy)
+  // file chips (with inline download/copy/diff/undo)
   if (fileChips && fileChips.length) {
     fileChips.forEach((path) => {
       const row = document.createElement("div");
       row.className = "file-chip-row";
+      const showDiffUndo = hasHistory(path);
       row.innerHTML = `
         <button class="file-chip-name" data-action="open">${ICON.file} <span>${escapeHtml(path)}</span></button>
         <div class="file-chip-actions">
+          ${showDiffUndo ? `<button class="chip-action-btn" data-action="diff" title="View changes">${ICON.diff}</button>` : ""}
+          ${showDiffUndo ? `<button class="chip-action-btn" data-action="undo" title="Undo this edit">${ICON.undo}</button>` : ""}
           <button class="chip-action-btn" data-action="copy" title="Copy">${ICON.copy}</button>
           <button class="chip-action-btn" data-action="download" title="Download">${ICON.download}</button>
         </div>`;
       row.querySelector('[data-action="open"]').addEventListener("click", () => openPreviewModal(path));
       row.querySelector('[data-action="copy"]').addEventListener("click", () => copyFileContent(path));
       row.querySelector('[data-action="download"]').addEventListener("click", () => downloadFile(path));
+      const diffBtn = row.querySelector('[data-action="diff"]');
+      if (diffBtn) diffBtn.addEventListener("click", () => openDiffModal(path));
+      const undoBtn = row.querySelector('[data-action="undo"]');
+      if (undoBtn) undoBtn.addEventListener("click", async () => {
+        const ok = await showConfirm(`Undo the last change to "${path}"?`, "Undo Edit");
+        if (!ok) return;
+        if (undoFileChange(path)) {
+          renderFileList();
+          showToast(`${path} reverted`);
+        } else {
+          showToast("No earlier version found");
+        }
+      });
       div.appendChild(row);
     });
   }
@@ -794,13 +1146,45 @@ function tryLocalIntent(text) {
 
 // ---------- CHAT HISTORY TRIMMING ----------
 function buildTrimmedMessages() {
-  // Keep only last 6 for the actual API call (server also enforces this)
-  return currentChat.slice(-6).map((m) => ({ role: m.role === "bot" ? "assistant" : "user", content: m.content }));
+  // Keep the most recent messages up to ~4000 chars OR 6 messages, whichever is smaller —
+  // short replies like "ok"/"haan" barely cost anything, so this avoids paying for 6 long
+  // technical messages when 3-4 would carry the same context at a fraction of the tokens.
+  const CHAR_BUDGET = 4000;
+  const MAX_COUNT = 6;
+  const recent = currentChat.slice(-MAX_COUNT);
+  let totalChars = 0;
+  const kept = [];
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const len = recent[i].content.length;
+    if (kept.length > 0 && totalChars + len > CHAR_BUDGET) break; // always keep at least the latest one
+    totalChars += len;
+    kept.unshift(recent[i]);
+  }
+  return kept.map((m) => ({ role: m.role === "bot" ? "assistant" : "user", content: m.content }));
 }
 
-function buildFileContext() {
+// Heuristic: does this message plausibly need the current project's file content sent
+// along with it? Generic questions ("explain closures", "hi", "what's a promise") don't
+// need 18k chars of file context riding along — only send it when the message references
+// a file by name/extension, or uses action verbs that imply working on existing code.
+function messageNeedsFileContext(text) {
+  const t = text.toLowerCase();
+  const paths = Object.keys(currentFiles);
+  // mentions an actual file name from the project
+  if (paths.some((p) => t.includes(p.toLowerCase()) || t.includes(p.split("/").pop().toLowerCase()))) return true;
+  // mentions a code file extension generically
+  if (/\.(html?|css|js|jsx|tsx?|py|json)\b/.test(t)) return true;
+  // action verbs that imply modifying/looking at existing code
+  if (/\b(fix|edit|update|change|add|remove|delete|refactor|debug|improve|isme|ismein|iska|isko|ye|yeh)\b/.test(t)) return true;
+  // very first message in a project that already has files — safe default to include
+  if (paths.length && currentChat.filter((m) => m.role === "user").length <= 1) return true;
+  return false;
+}
+
+function buildFileContext(text) {
   const paths = Object.keys(currentFiles);
   if (!paths.length) return "";
+  if (text !== undefined && !messageNeedsFileContext(text)) return ""; // save the tokens
 
   // Prioritize files the user's latest message actually names (e.g. "script.js mein fix karo")
   // so if we do have to cut something for size, it's the least-relevant file, not the one being edited.
@@ -825,14 +1209,41 @@ function buildFileContext() {
 }
 
 async function maybeSummarize() {
-  // very light heuristic: if chat grows past 6, fold the oldest excess into the summary string locally (no extra LLM call)
-  if (currentChat.length > 8) {
-    const toFold = currentChat.slice(0, currentChat.length - 6);
-    const folded = toFold.map((m) => `${m.role}: ${m.content}`).join(" | ").slice(0, 500);
-    chatSummary = (chatSummary ? chatSummary + " " : "") + folded;
-    chatSummary = chatSummary.slice(-1500); // cap summary size
-    currentChat = currentChat.slice(-6);
+  // Fold older turns into a proper summary once the chat grows past 8 messages, so long
+  // conversations don't silently lose context via crude truncation. This costs one extra
+  // small API call only when the threshold is crossed — not on every message — and the
+  // summarization prompt itself is short, so the token cost is minor compared to what it
+  // saves by not re-sending the full raw history forever.
+  if (currentChat.length <= 8) return;
+
+  const toFold = currentChat.slice(0, currentChat.length - 6);
+  const foldedText = toFold.map((m) => `${m.role}: ${m.content}`).join("\n").slice(0, 6000);
+
+  try {
+    const res = await fetch("/api/summarize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        priorSummary: chatSummary,
+        newTurns: foldedText,
+      }),
+    });
+    const data = await res.json();
+    if (data.ok && data.summary) {
+      chatSummary = data.summary.slice(0, 1500);
+      currentChat = currentChat.slice(-6);
+      return;
+    }
+  } catch (e) {
+    console.warn("Summarization call failed, falling back to local fold:", e);
   }
+
+  // Fallback if the summarize endpoint fails for any reason — keep the old crude-but-safe
+  // behavior so a chat never gets stuck un-trimmed.
+  const folded = toFold.map((m) => `${m.role}: ${m.content}`).join(" | ").slice(0, 500);
+  chatSummary = (chatSummary ? chatSummary + " " : "") + folded;
+  chatSummary = chatSummary.slice(-1500);
+  currentChat = currentChat.slice(-6);
 }
 
 // ---------- APPLY LLM FILE OPS ----------
@@ -842,7 +1253,9 @@ function applyFileOps(files) {
   const failed = [];
   for (const f of files) {
     if (!f.path) continue;
+    const before = currentFiles[f.path]; // undefined if brand-new
     if (f.action === "create" || (f.action === "edit" && f.content && !currentFiles[f.path])) {
+      if (before !== undefined) recordFileSnapshot(currentProjectId, f.path, before, "recreated");
       currentFiles[f.path] = f.content ?? "";
       touched.push(f.path);
     } else if (f.action === "edit") {
@@ -863,9 +1276,13 @@ function applyFileOps(files) {
             fileHadMiss = true;
           }
         }
-        if (fileChanged) touched.push(f.path);
+        if (fileChanged) {
+          recordFileSnapshot(currentProjectId, f.path, before, "AI edit");
+          touched.push(f.path);
+        }
         if (fileHadMiss) failed.push(f.path);
       } else if (f.content) {
+        recordFileSnapshot(currentProjectId, f.path, before, "AI edit");
         content = f.content;
         touched.push(f.path);
       }
@@ -899,44 +1316,90 @@ async function sendMessage() {
     return;
   }
 
-  // 2) otherwise call LLM
+  // 2) otherwise call LLM (streaming)
   $("sendBtn").disabled = true;
   pushStatus("Samajh raha hoon...");
 
-  // Give the user a sense of progress while we wait for the (single) API response.
-  // These are staged local updates — not fake data, just honest phase labels for a
-  // request that's genuinely in flight.
-  const stageTimers = [];
-  stageTimers.push(setTimeout(() => updateStatus("Model se connect ho raha hai..."), 1200));
-  stageTimers.push(setTimeout(() => updateStatus("Code likh raha hai..."), 3500));
-  stageTimers.push(setTimeout(() => updateStatus("Thoda aur time lag raha hai, rukiye..."), 9000));
+  let streamingBubble = null; // becomes a live "typing" content element once text starts arriving
+
+  function ensureStreamingBubble() {
+    if (streamingBubble) return streamingBubble;
+    clearStatus(); // replace the spinner bubble with the actual live text bubble
+    const log = $("chatLog");
+    $("emptyState").classList.add("hidden");
+    const div = document.createElement("div");
+    div.className = "msg bot streaming";
+    const contentEl = document.createElement("div");
+    contentEl.className = "msg-content";
+    div.appendChild(contentEl);
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    streamingBubble = { div, contentEl };
+    return streamingBubble;
+  }
 
   try {
     await maybeSummarize();
+
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: buildTrimmedMessages(),
         summary: chatSummary,
-        fileContext: buildFileContext(),
+        fileContext: buildFileContext(text),
+        stream: true,
       }),
     });
-    const data = await res.json();
-    stageTimers.forEach(clearTimeout);
+
+    if (!res.body) throw new Error("No response body (streaming unsupported)");
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalData = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop();
+
+      for (const chunk of chunks) {
+        const eventMatch = chunk.match(/^event:\s*(.+)$/m);
+        const dataMatch = chunk.match(/^data:\s*(.+)$/m);
+        if (!eventMatch || !dataMatch) continue;
+        const eventType = eventMatch[1].trim();
+        let payload;
+        try { payload = JSON.parse(dataMatch[1]); } catch { continue; }
+
+        if (eventType === "partial") {
+          const bubble = ensureStreamingBubble();
+          bubble.contentEl.innerHTML = renderMarkdown(payload.text || "");
+          $("chatLog").scrollTop = $("chatLog").scrollHeight;
+        } else if (eventType === "final") {
+          finalData = payload;
+        }
+      }
+    }
+
+    if (!finalData) throw new Error("Stream ended without a final result");
+    const data = finalData;
 
     const replyText = data.reply || "…";
     const filesToApply = data.files || [];
 
+    // Remove the temporary streaming bubble now — the real, fully-formed bot message
+    // (with footer, file chips, etc.) replaces it below via the normal appendMsgToDom path.
+    if (streamingBubble) streamingBubble.div.remove();
+
     if (filesToApply.length) {
-      // Walk through each file so the user sees exactly what's happening, one by one.
-      // IMPORTANT: reuse the single status bubble via updateStatus() only — never call
-      // pushStatus() again mid-loop, or the previous bubble is orphaned still spinning.
       let anyEditFailed = false;
       for (const f of filesToApply) {
         const verb = f.action === "edit" ? "Editing" : "Creating";
         updateStatus(`${verb} ${f.path}...`);
-        await sleep(300); // brief pause so each step is actually readable
+        await sleep(300);
         const result = applyFileOps([f]);
         if (result.failed.length) anyEditFailed = true;
         const label = result.failed.length
@@ -957,16 +1420,13 @@ async function sendMessage() {
     saveChat(currentProjectId, currentChat, chatSummary);
     appendMsgToDom("bot", replyText, touchedFiles, { id: botMsg.id, ts: botMsg.ts });
   } catch (e) {
+    if (streamingBubble) streamingBubble.div.remove();
     const msg = "Connection issue — phir se try karo.";
     const errMsg = { role: "bot", content: msg, id: genId(), ts: Date.now() };
     currentChat.push(errMsg);
     saveChat(currentProjectId, currentChat, chatSummary);
     appendMsgToDom("bot", msg, null, { id: errMsg.id, ts: errMsg.ts });
   } finally {
-    // Guaranteed cleanup — no matter how the try block exits (success, thrown error,
-    // JSON parse failure), the spinner/status bubble and pending timers must never
-    // survive past this point. This is what was causing the "loading never stops" bug.
-    stageTimers.forEach(clearTimeout);
     clearStatus();
     $("sendBtn").disabled = false;
   }
@@ -1047,6 +1507,65 @@ function autoResize() {
   el.style.height = Math.min(el.scrollHeight, 100) + "px";
 }
 
+// ---------- VOICE INPUT ----------
+// Uses the Web Speech API (supported in Chrome on Android, which covers this app's
+// primary phone-browser use case). Silently hides the mic button where unsupported
+// rather than showing a broken control.
+const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isListening = false;
+
+function initVoiceInput() {
+  const micBtn = $("micBtn");
+  if (!SpeechRecognitionAPI) {
+    micBtn.classList.add("unsupported");
+    return;
+  }
+  recognition = new SpeechRecognitionAPI();
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  // "hi-IN" recognizes Hindi/Hinglish speech reasonably well on Android Chrome; falls
+  // back gracefully to English-only recognition on browsers that don't support it well.
+  recognition.lang = "hi-IN";
+
+  recognition.onresult = (e) => {
+    let transcript = "";
+    for (let i = 0; i < e.results.length; i++) {
+      transcript += e.results[i][0].transcript;
+    }
+    $("chatInput").value = transcript;
+    autoResize();
+  };
+  recognition.onerror = (e) => {
+    console.warn("Speech recognition error:", e.error);
+    stopListening();
+    if (e.error === "not-allowed") showToast("Microphone access denied");
+  };
+  recognition.onend = () => stopListening();
+
+  micBtn.addEventListener("click", () => {
+    if (isListening) stopListening();
+    else startListening();
+  });
+}
+
+function startListening() {
+  if (!recognition) return;
+  try {
+    recognition.start();
+    isListening = true;
+    $("micBtn").classList.add("listening");
+  } catch (e) {
+    console.warn("Could not start recognition:", e);
+  }
+}
+function stopListening() {
+  if (!recognition) return;
+  try { recognition.stop(); } catch {}
+  isListening = false;
+  $("micBtn").classList.remove("listening");
+}
+
 // ---------- FILE / FOLDER IMPORT ----------
 // Lets the user bring in an existing project (multiple loose files, or a whole folder via
 // webkitdirectory) so the AI can see it once and keep working on it — same idea as pasting
@@ -1070,6 +1589,16 @@ function openImportPicker() {
 }
 function closeImportPicker() {
   const ov = $("importPickerOverlay");
+  ov.classList.remove("show");
+  setTimeout(() => ov.classList.add("hidden"), 200);
+}
+
+function openTemplatePicker() {
+  $("templatePickerOverlay").classList.remove("hidden");
+  requestAnimationFrame(() => $("templatePickerOverlay").classList.add("show"));
+}
+function closeTemplatePicker() {
+  const ov = $("templatePickerOverlay");
   ov.classList.remove("show");
   setTimeout(() => ov.classList.add("hidden"), 200);
 }
@@ -1143,6 +1672,10 @@ async function handleImportedFileList(fileList) {
   if (skippedCap) extras.push(`${skippedCap} file(s) skipped (import limit is ${MAX_IMPORT_TOTAL_FILES} per batch)`);
   if (skippedTooBig) extras.push(`${skippedTooBig} file(s) skipped (too large, over ~30k chars)`);
   if (extras.length) note += `\n(${extras.join(", ")})`;
+  const hasJsxOrTs = imported.some((f) => /\.(jsx|tsx|ts)$/i.test(f.path));
+  if (hasJsxOrTs) {
+    note += `\n\nNote: .jsx/.tsx/.ts files won't run directly in Preview (no build step here) — ask the AI to convert to plain HTML/CSS/JS if you want to preview it live.`;
+  }
   addSystemMsg(note);
   showToast(`${imported.length} file(s) imported`);
 }
@@ -1153,13 +1686,24 @@ $("drawerOverlay").addEventListener("click", closeDrawer);
 $("filesBtn").addEventListener("click", openFilesPanel);
 $("filesOverlay").addEventListener("click", closeFilesPanel);
 $("closePreviewBtn").addEventListener("click", closePreviewModal);
+$("closeDiffBtn").addEventListener("click", closeDiffModal);
 $("previewRefreshBtn").addEventListener("click", () => {
   const path = $("previewModal").dataset.currentPath;
   if (path) openPreviewModal(path);
 });
-$("newProjectBtn").addEventListener("click", async () => {
-  const name = await showPrompt("Project ka naam?", "My Project", "New Project");
-  if (name) createProject(name);
+$("newProjectBtn").addEventListener("click", openTemplatePicker);
+$("templatePickerCancelBtn").addEventListener("click", closeTemplatePicker);
+$("templatePickerOverlay").addEventListener("click", (e) => {
+  if (e.target.id === "templatePickerOverlay") closeTemplatePicker();
+});
+$("templateList").querySelectorAll("[data-template]").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const key = btn.dataset.template;
+    closeTemplatePicker();
+    const label = TEMPLATES[key]?.label || "Project";
+    const name = await showPrompt("Project ka naam?", label, "New Project");
+    if (name) createProjectFromTemplate(name, key);
+  });
 });
 $("downloadZipBtn").addEventListener("click", downloadZip);
 $("importFilesBtn").addEventListener("click", openImportPicker);
