@@ -133,28 +133,55 @@
     <main id="chatArea" class="chat-area">
       <div id="chatLog" class="chat-log">
         <div class="empty-state" id="emptyState">
-          <p>Chat mein bolo:</p>
-          <p class="hint">"React component bana do" · "is file mein bug fix karo" · "naya project banao"</p>
+          <h2 class="empty-title">What are we building today?</h2>
+          <div class="shortcut-grid">
+            <button class="shortcut-card" data-shortcut="template">
+              <span class="shortcut-icon">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+              </span>
+              <span class="shortcut-label">Use a template</span>
+            </button>
+            <button class="shortcut-card" data-shortcut="upload">
+              <span class="shortcut-icon">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              </span>
+              <span class="shortcut-label">Upload files</span>
+            </button>
+            <button class="shortcut-card" data-shortcut="discuss">
+              <span class="shortcut-icon">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </span>
+              <span class="shortcut-label">Discuss project</span>
+            </button>
+            <button class="shortcut-card" data-shortcut="fix">
+              <span class="shortcut-icon">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+              </span>
+              <span class="shortcut-label">Fix a bug</span>
+            </button>
+          </div>
+          <p class="hint">Or just type below — Hinglish chalega.</p>
         </div>
       </div>
     </main>
 
+
     <!-- INPUT BAR -->
     <footer class="input-bar">
-      <button id="attachBtn" class="attach-btn" aria-label="Attach files">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95L9.41 17.41a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49"/></svg>
-      </button>
       <input type="file" id="attachInput" multiple hidden
         accept=".js,.jsx,.ts,.tsx,.html,.htm,.css,.json,.md,.txt,.py,.java,.c,.cpp,.h,.go,.rs,.php,.rb,.sql,.yml,.yaml,.xml,.svg,image/*,.pdf" />
       <div class="input-wrap">
+        <button id="attachBtn" class="attach-btn" aria-label="Attach files">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
         <textarea id="chatInput" placeholder="Message... (Hinglish chalega)" rows="1"></textarea>
         <button id="micBtn" class="mic-btn" aria-label="Voice input">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         </button>
+        <button id="sendBtn" class="send-btn" aria-label="Send">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+        </button>
       </div>
-      <button id="sendBtn" class="send-btn" aria-label="Send">
-        <svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.6 22 12 3.4 3.4 3 10l13 2-13 2z"/></svg>
-      </button>
     </footer>
 
     <!-- CUSTOM MODAL (replaces browser prompt/confirm/alert) -->
