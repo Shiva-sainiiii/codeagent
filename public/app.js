@@ -1382,6 +1382,8 @@ function applyFileOps(files) {
 }
 
 // ---------- SEND MESSAGE ----------
+let currentRequestController = null; // AbortController for the in-flight sendMessage call, so Stop can actually cancel it
+
 async function sendMessage() {
   const input = $("chatInput");
   const text = input.value.trim();
@@ -1405,10 +1407,12 @@ async function sendMessage() {
   }
 
   // 2) otherwise call LLM (streaming)
-  $("sendBtn").disabled = true;
+  currentRequestController = new AbortController();
+  setSendingState(true);
   pushStatus("Samajh raha hoon...");
 
   let streamingBubble = null; // becomes a live "typing" content element once text starts arriving
+  let partialTextSoFar = ""; // function-scoped so the catch block (on Stop/abort) can still read it
 
   function ensureStreamingBubble() {
     if (streamingBubble) return streamingBubble;
@@ -1438,6 +1442,7 @@ async function sendMessage() {
         fileContext: buildFileContext(text),
         stream: true,
       }),
+      signal: currentRequestController.signal,
     });
 
     if (!res.body) throw new Error("No response body (streaming unsupported)");
@@ -1463,8 +1468,9 @@ async function sendMessage() {
         try { payload = JSON.parse(dataMatch[1]); } catch { continue; }
 
         if (eventType === "partial") {
+          partialTextSoFar = payload.text || "";
           const bubble = ensureStreamingBubble();
-          bubble.contentEl.innerHTML = renderMarkdown(payload.text || "");
+          bubble.contentEl.innerHTML = renderMarkdown(partialTextSoFar);
           $("chatLog").scrollTop = $("chatLog").scrollHeight;
         } else if (eventType === "final") {
           finalData = payload;
@@ -1472,7 +1478,18 @@ async function sendMessage() {
       }
     }
 
-    if (!finalData) throw new Error("Stream ended without a final result");
+    if (!finalData) {
+      // Stream ended with no final event — either the connection dropped, or (more likely
+      // here) the user hit Stop, which aborts the reader and lands us in the catch block
+      // below instead, not this branch. Treat this as a soft failure either way.
+      if (partialTextSoFar) {
+        // We at least have partial text the user saw — keep it as the saved message rather
+        // than discarding it, since re-asking from scratch wastes the tokens already spent.
+        finalData = { ok: true, reply: partialTextSoFar, files: [] };
+      } else {
+        throw new Error("Stream ended without a final result");
+      }
+    }
     const data = finalData;
 
     const replyText = data.reply || "…";
@@ -1512,15 +1529,43 @@ async function sendMessage() {
     appendMsgToDom("bot", replyText, touchedFiles, { id: botMsg.id, ts: botMsg.ts });
   } catch (e) {
     if (streamingBubble) streamingBubble.div.remove();
-    const msg = "Connection issue — phir se try karo.";
-    const errMsg = { role: "bot", content: msg, id: genId(), ts: Date.now() };
-    currentChat.push(errMsg);
-    saveChat(currentProjectId, currentChat, chatSummary);
-    appendMsgToDom("bot", msg, null, { id: errMsg.id, ts: errMsg.ts });
+    if (e.name === "AbortError") {
+      // User pressed Stop — save whatever text had already streamed in (if any) rather
+      // than discarding it, since tokens for that partial response were already spent.
+      const partialContent = partialTextSoFar
+        ? partialTextSoFar + "\n\n_[Stopped by user]_"
+        : "_[Stopped by user]_";
+      const stoppedMsg = { role: "bot", content: partialContent, id: genId(), ts: Date.now() };
+      currentChat.push(stoppedMsg);
+      saveChat(currentProjectId, currentChat, chatSummary);
+      appendMsgToDom("bot", partialContent, null, { id: stoppedMsg.id, ts: stoppedMsg.ts });
+    } else {
+      const msg = "Connection issue — phir se try karo.";
+      const errMsg = { role: "bot", content: msg, id: genId(), ts: Date.now() };
+      currentChat.push(errMsg);
+      saveChat(currentProjectId, currentChat, chatSummary);
+      appendMsgToDom("bot", msg, null, { id: errMsg.id, ts: errMsg.ts });
+    }
   } finally {
     clearStatus();
-    $("sendBtn").disabled = false;
+    setSendingState(false);
+    currentRequestController = null;
   }
+}
+
+// Toggles the input bar between "send mode" and "sending mode" (send button becomes a
+// Stop button while a request is in flight, so the user can cancel instead of being
+// stuck waiting for something they realize mid-request they want to change).
+function setSendingState(isSending) {
+  const sendBtn = $("sendBtn");
+  sendBtn.classList.toggle("sending", isSending);
+  if (isSending) sendBtn.classList.remove("hidden-btn");
+  sendBtn.disabled = false; // never actually disabled — during sending, tapping it stops instead
+  sendBtn.setAttribute("aria-label", isSending ? "Stop" : "Send");
+  sendBtn.innerHTML = isSending
+    ? `<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`
+    : `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>`;
+  if (!isSending) updateSendMicToggle(); // restore mic/send visibility logic based on input content
 }
 
 function sleep(ms) {
@@ -1600,9 +1645,10 @@ function autoResize() {
 }
 
 function updateSendMicToggle() {
+  const sendBtn = $("sendBtn");
+  if (sendBtn.classList.contains("sending")) return; // Stop button stays visible regardless of input text
   const hasText = $("chatInput").value.trim().length > 0;
   const micBtn = $("micBtn");
-  const sendBtn = $("sendBtn");
   if (hasText) {
     sendBtn.classList.remove("hidden-btn");
     if (!micBtn.classList.contains("unsupported")) micBtn.style.display = "none";
@@ -1894,13 +1940,17 @@ $("attachInput").addEventListener("change", (e) => {
   handleImportedFileList(e.target.files);
   e.target.value = "";
 });
-$("sendBtn").addEventListener("click", sendMessage);
-$("chatInput").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
+$("sendBtn").addEventListener("click", () => {
+  if (currentRequestController) {
+    currentRequestController.abort();
+  } else {
     sendMessage();
   }
 });
+// Enter always inserts a newline (textarea's native behavior) — on mobile there's no
+// Shift key, so treating plain Enter as "send" meant any accidental tap, or just wanting
+// a new line while typing a longer message, fired the message early. Sending now only
+// happens via the explicit send button tap.
 $("chatInput").addEventListener("input", autoResize);
 updateSendMicToggle();
 
