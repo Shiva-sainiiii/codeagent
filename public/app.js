@@ -20,6 +20,7 @@ const ICON = {
   undo: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`,
   mic: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`,
   code: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+  retry: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`,
 };
 
 // ---------- STATE ----------
@@ -944,6 +945,108 @@ function formatTime(ts) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+// ---------- LONG-PRESS EDIT (user messages) ----------
+// Hold a user message to edit and resend it — truncates everything after that point in
+// the conversation (matches Claude/ChatGPT's standard edit-message behavior) and re-sends.
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_MOVE_TOLERANCE = 10; // px — cancels the hold if the finger drags this far (scrolling)
+
+function attachLongPressEdit(bubbleEl, contentEl, msgId, originalText) {
+  let timer = null;
+  let startX = 0, startY = 0;
+
+  const start = (x, y) => {
+    startX = x; startY = y;
+    bubbleEl.classList.add("pressing");
+    timer = setTimeout(() => {
+      bubbleEl.classList.remove("pressing");
+      startEditingMessage(bubbleEl, contentEl, msgId, originalText);
+    }, LONG_PRESS_MS);
+  };
+  const cancel = () => {
+    clearTimeout(timer);
+    bubbleEl.classList.remove("pressing");
+  };
+  const move = (x, y) => {
+    if (Math.abs(x - startX) > LONG_PRESS_MOVE_TOLERANCE || Math.abs(y - startY) > LONG_PRESS_MOVE_TOLERANCE) {
+      cancel();
+    }
+  };
+
+  bubbleEl.addEventListener("touchstart", (e) => {
+    const t = e.touches[0];
+    start(t.clientX, t.clientY);
+  }, { passive: true });
+  bubbleEl.addEventListener("touchmove", (e) => {
+    const t = e.touches[0];
+    move(t.clientX, t.clientY);
+  }, { passive: true });
+  bubbleEl.addEventListener("touchend", cancel);
+  bubbleEl.addEventListener("touchcancel", cancel);
+
+  // Desktop/mouse support too (testing, and anyone using this from a laptop browser)
+  bubbleEl.addEventListener("mousedown", (e) => start(e.clientX, e.clientY));
+  bubbleEl.addEventListener("mousemove", (e) => { if (timer) move(e.clientX, e.clientY); });
+  bubbleEl.addEventListener("mouseup", cancel);
+  bubbleEl.addEventListener("mouseleave", cancel);
+}
+
+function startEditingMessage(bubbleEl, contentEl, msgId, originalText) {
+  if (currentRequestController) return showToast("Wait for the current response to finish first");
+  if (bubbleEl.classList.contains("editing")) return;
+  bubbleEl.classList.add("editing");
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "edit-msg-textarea";
+  textarea.value = originalText;
+  const actions = document.createElement("div");
+  actions.className = "edit-msg-actions";
+  actions.innerHTML = `
+    <button class="edit-msg-btn cancel">Cancel</button>
+    <button class="edit-msg-btn save">Save &amp; Resend</button>`;
+
+  contentEl.replaceWith(textarea);
+  bubbleEl.appendChild(actions);
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  textarea.style.height = "auto";
+  textarea.style.height = Math.min(textarea.scrollHeight, 200) + "px";
+  textarea.addEventListener("input", () => {
+    textarea.style.height = "auto";
+    textarea.style.height = Math.min(textarea.scrollHeight, 200) + "px";
+  });
+
+  actions.querySelector(".cancel").addEventListener("click", () => {
+    textarea.replaceWith(contentEl);
+    actions.remove();
+    bubbleEl.classList.remove("editing");
+  });
+
+  actions.querySelector(".save").addEventListener("click", async () => {
+    const newText = textarea.value.trim();
+    if (!newText) return showToast("Message can't be empty");
+    await resendEditedMessage(msgId, newText);
+  });
+}
+
+// Truncates the conversation at the edited message (everything after it — including the
+// AI's original response — is discarded, matching standard edit-message behavior) and
+// re-sends the edited text as a fresh request.
+async function resendEditedMessage(msgId, newText) {
+  const idx = currentChat.findIndex((m) => m.id === msgId);
+  if (idx === -1) return showToast("Message not found");
+
+  currentChat = currentChat.slice(0, idx);
+  saveChat(currentProjectId, currentChat, chatSummary);
+
+  // Re-render the whole log from the truncated history, then send the edited text through
+  // the normal path so it appends fresh (keeps this in sync with how sendMessage builds
+  // the DOM, rather than duplicating that logic here).
+  renderChatLog();
+  $("chatInput").value = newText;
+  await sendMessage();
+}
+
 function appendMsgToDom(role, content, fileChips, meta) {
   meta = meta || {};
   const log = $("chatLog");
@@ -1000,12 +1103,15 @@ function appendMsgToDom(role, content, fileChips, meta) {
     });
   }
 
-  // USER bubble: timestamp only, no action row (keeps the bubble small and quiet)
+  // USER bubble: timestamp only, no action row (keeps the bubble small and quiet).
+  // Long-press (hold) the bubble to edit and resend — everything after this message in
+  // the conversation is replaced, matching how Claude/ChatGPT handle message edits.
   if (role === "user") {
     const timeEl = document.createElement("span");
     timeEl.className = "msg-time-only";
     timeEl.textContent = formatTime(meta.ts);
     div.appendChild(timeEl);
+    attachLongPressEdit(div, contentEl, meta.id, content);
   }
 
   // BOT panel: full action row — time, copy, share, like/dislike (matches Claude-style layout)
@@ -1013,8 +1119,12 @@ function appendMsgToDom(role, content, fileChips, meta) {
     const footer = document.createElement("div");
     footer.className = "msg-footer";
     const timeStr = formatTime(meta.ts);
+    const retryBtnHtml = meta.stopped
+      ? `<button class="msg-action-btn retry-btn" data-action="retry" title="Retry">${ICON.retry}</button>`
+      : "";
     footer.innerHTML = `
       <span class="msg-time">${timeStr}</span>
+      ${retryBtnHtml}
       <button class="msg-action-btn" data-action="copy-msg" title="Copy">${ICON.copy}</button>
       <button class="msg-action-btn" data-action="share-msg" title="Share">${ICON.share}</button>
       <button class="msg-action-btn like-btn" data-action="like" title="Like">${ICON.thumbsUp}</button>
@@ -1022,6 +1132,10 @@ function appendMsgToDom(role, content, fileChips, meta) {
 
     footer.querySelector('[data-action="copy-msg"]').addEventListener("click", () => copyText(content, "Message"));
     footer.querySelector('[data-action="share-msg"]').addEventListener("click", () => shareText(content));
+
+    if (meta.stopped) {
+      footer.querySelector('[data-action="retry"]').addEventListener("click", () => retryStoppedMessage(meta.retryPrompt));
+    }
 
     const likeBtn = footer.querySelector(".like-btn");
     const dislikeBtn = footer.querySelector(".dislike-btn");
@@ -1407,6 +1521,18 @@ async function sendMessage() {
   }
 
   // 2) otherwise call LLM (streaming)
+  await runLlmRequest(text);
+}
+
+// Re-sends a prompt after it was stopped mid-response, without re-adding the user message
+// bubble (it's already in the chat) — used by the Retry button on a stopped message.
+async function retryStoppedMessage(promptText) {
+  if (!promptText) return showToast("Original message not found");
+  if (currentRequestController) return; // a request is already in flight, ignore
+  await runLlmRequest(promptText);
+}
+
+async function runLlmRequest(text) {
   currentRequestController = new AbortController();
   setSendingState(true);
   pushStatus("Samajh raha hoon...");
@@ -1535,10 +1661,17 @@ async function sendMessage() {
       const partialContent = partialTextSoFar
         ? partialTextSoFar + "\n\n_[Stopped by user]_"
         : "_[Stopped by user]_";
-      const stoppedMsg = { role: "bot", content: partialContent, id: genId(), ts: Date.now() };
+      const stoppedMsg = {
+        role: "bot",
+        content: partialContent,
+        id: genId(),
+        ts: Date.now(),
+        stopped: true,
+        retryPrompt: text, // the original user message, so Retry can re-send exactly this
+      };
       currentChat.push(stoppedMsg);
       saveChat(currentProjectId, currentChat, chatSummary);
-      appendMsgToDom("bot", partialContent, null, { id: stoppedMsg.id, ts: stoppedMsg.ts });
+      appendMsgToDom("bot", partialContent, null, { id: stoppedMsg.id, ts: stoppedMsg.ts, stopped: true, retryPrompt: text });
     } else {
       const msg = "Connection issue — phir se try karo.";
       const errMsg = { role: "bot", content: msg, id: genId(), ts: Date.now() };
