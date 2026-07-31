@@ -1727,6 +1727,11 @@ $("importFolderInput").addEventListener("change", (e) => {
   handleImportedFileList(e.target.files);
   e.target.value = "";
 });
+$("attachBtn").addEventListener("click", () => $("attachInput").click());
+$("attachInput").addEventListener("change", (e) => {
+  handleImportedFileList(e.target.files);
+  e.target.value = "";
+});
 $("sendBtn").addEventListener("click", sendMessage);
 $("chatInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
