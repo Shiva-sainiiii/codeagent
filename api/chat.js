@@ -50,6 +50,15 @@ RULES:
    - Before returning the JSON, mentally trace the user flow once (e.g. "user taps 7, then +, then 3, then =") and check that the class/id names line up across all three files.
    - When editing only ONE file of an existing linked trio, do not break the existing links — keep referencing the same filenames the other files already expect.`;
 
+const PLAN_SYSTEM_PROMPT = `You are planning (not yet building) a coding task for a mobile app. Given the user's request and any existing project files, respond with ONLY this JSON, nothing else:
+{ "steps": ["short step 1", "short step 2", ...] }
+
+Rules:
+- 2-5 steps maximum. Each step is one short sentence (under 15 words), plain language, no code.
+- Steps should describe WHAT will be built/changed and in what order (e.g. "Create index.html with the game board layout", "Add style.css for the dark theme", "Add script.js with the game logic and win detection").
+- Do not write any actual code or file content — this is a plan only.
+- If the request is trivial (one small change), still return 1-2 steps describing it briefly.`;
+
 // simple sleep helper
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -66,7 +75,7 @@ async function callOpenRouterStream(messages, apiKey, model) {
       model,
       messages,
       temperature: 0.3,
-      max_tokens: 8000,
+      max_tokens: 16000,
       stream: true,
     }),
   });
@@ -76,12 +85,39 @@ async function callOpenRouterStream(messages, apiKey, model) {
     const text = await res.text().catch(() => "");
     const err = new Error(`OpenRouter ${status}: ${text.slice(0, 300)}`);
     err.status = status;
+    if (status === 429) err.retryInfo = extractRetryInfo(res, text);
     throw err;
   }
   return res; // caller reads the SSE body stream directly
 }
 
-async function callOpenRouter(messages, apiKey, model) {
+// Pulls a usable "try again in X" estimate out of a 429 response — checks the standard
+// Retry-After header first (seconds or an HTTP-date), then falls back to scanning the
+// response body text for anything OpenRouter/the underlying provider included, since not
+// every provider in the free chain sends the header consistently.
+function extractRetryInfo(res, bodyText) {
+  const headerVal = res.headers.get("retry-after");
+  if (headerVal) {
+    const asSeconds = Number(headerVal);
+    if (!Number.isNaN(asSeconds)) return { seconds: asSeconds, source: "header" };
+    const asDate = Date.parse(headerVal);
+    if (!Number.isNaN(asDate)) {
+      const seconds = Math.max(0, Math.round((asDate - Date.now()) / 1000));
+      return { seconds, source: "header" };
+    }
+  }
+  // Some providers mention a reset time or duration in the error body itself.
+  const match = bodyText.match(/reset[s]?\s*(?:in|at)?\s*[:\s]?\s*([\d.]+)\s*(second|minute|hour|s\b|m\b|h\b)/i);
+  if (match) {
+    const n = parseFloat(match[1]);
+    const unit = match[2].toLowerCase();
+    const seconds = unit.startsWith("h") ? n * 3600 : unit.startsWith("m") ? n * 60 : n;
+    return { seconds: Math.round(seconds), source: "body" };
+  }
+  return null;
+}
+
+async function callOpenRouter(messages, apiKey, model, maxTokens = 16000) {
   const res = await fetch(OPENROUTER_URL, {
     method: "POST",
     headers: {
@@ -94,7 +130,7 @@ async function callOpenRouter(messages, apiKey, model) {
       model,
       messages,
       temperature: 0.3,
-      max_tokens: 8000,
+      max_tokens: maxTokens,
     }),
   });
 
@@ -103,6 +139,7 @@ async function callOpenRouter(messages, apiKey, model) {
     const text = await res.text().catch(() => "");
     const err = new Error(`OpenRouter ${status}: ${text.slice(0, 300)}`);
     err.status = status;
+    if (status === 429) err.retryInfo = extractRetryInfo(res, text);
     throw err;
   }
 
@@ -158,6 +195,19 @@ function extractJson(raw) {
     truncErr.truncated = true;
     throw truncErr;
   }
+}
+
+// Turns whatever retry estimate we managed to extract (if any) into a clear message.
+// If no provider gave us a usable number, falls back to an honest "no exact time known"
+// note rather than inventing a specific-sounding number that isn't real.
+function formatRateLimitMessage(lastErr) {
+  const info = lastErr && lastErr.retryInfo;
+  if (info && info.seconds > 0) {
+    const mins = Math.ceil(info.seconds / 60);
+    const timeStr = mins <= 1 ? "~1 minute" : mins < 60 ? `~${mins} minutes` : `~${Math.ceil(mins / 60)} hour(s)`;
+    return `Sab free models abhi rate-limited hain. ${timeStr} baad phir try karo.`;
+  }
+  return "Sab free models abhi busy/rate-limited hain. Exact reset time nahi pata — kuch minute ruk ke, ya thodi der (1-2 ghante) baad try karo.";
 }
 
 async function handleStreamingRequest(res, chatMessages) {
@@ -242,7 +292,7 @@ async function handleStreamingRequest(res, chatMessages) {
   } else {
     send("final", {
       ok: false,
-      reply: "Sab free models abhi busy/rate-limited hain. Thoda ruk ke phir try karo (30-60 sec).",
+      reply: formatRateLimitMessage(lastErr),
       files: [],
       error: lastErr ? lastErr.message : "unknown error",
     });
@@ -267,13 +317,14 @@ module.exports = async (req, res) => {
   apiKey_GLOBAL = apiKey;
 
   try {
-    const { messages, summary, fileContext, stream } = req.body || {};
+    const { messages, summary, fileContext, stream, planOnly } = req.body || {};
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: "messages array required" });
     }
 
     // Build the trimmed context: system + rolling summary + relevant file context + last messages
-    const chatMessages = [{ role: "system", content: SYSTEM_PROMPT }];
+    const systemPromptToUse = planOnly ? PLAN_SYSTEM_PROMPT : SYSTEM_PROMPT;
+    const chatMessages = [{ role: "system", content: systemPromptToUse }];
 
     if (summary) {
       chatMessages.push({
@@ -292,6 +343,25 @@ module.exports = async (req, res) => {
     // last 5-6 messages only (trimming already done client-side, but enforce here too)
     const recent = messages.slice(-6);
     chatMessages.push(...recent);
+
+    if (planOnly) {
+      // Small, cheap call — just a plan, no file content. Reuses the same model chain and
+      // retry logic as the main path, but with a tiny max_tokens ceiling since a plan is
+      // a handful of short lines, not code.
+      let lastPlanErr = null;
+      for (const model of MODEL_CHAIN) {
+        try {
+          const raw = await callOpenRouter(chatMessages, apiKey, model, 500);
+          const parsed = extractJson(raw);
+          const steps = Array.isArray(parsed.steps) ? parsed.steps.filter((s) => typeof s === "string") : [];
+          return res.status(200).json({ ok: true, model, planSteps: steps });
+        } catch (e) {
+          lastPlanErr = e;
+          continue; // plan calls are cheap enough to just try the next model on any failure
+        }
+      }
+      return res.status(200).json({ ok: false, planSteps: [], error: lastPlanErr ? lastPlanErr.message : "planning failed" });
+    }
 
     if (stream) {
       return handleStreamingRequest(res, chatMessages);
@@ -344,8 +414,7 @@ module.exports = async (req, res) => {
     // All models exhausted
     return res.status(200).json({
       ok: false,
-      reply:
-        "Sab free models abhi busy/rate-limited hain. Thoda ruk ke phir try karo (30-60 sec).",
+      reply: formatRateLimitMessage(lastErr),
       files: [],
       error: lastErr ? lastErr.message : "unknown error",
     });
