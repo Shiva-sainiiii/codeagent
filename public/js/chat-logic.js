@@ -388,38 +388,60 @@ async function runLlmRequest(text) {
     // (with footer, file chips, etc.) replaces it below via the normal appendMsgToDom path.
     if (streamingBubble) streamingBubble.div.remove();
 
+    let results = [];
+    let pendingReview = [];
+
     if (filesToApply.length) {
       let anyEditFailed = false;
-      // Apply all file operations first (fast, synchronous), then reveal each one to the
-      // user in staggered fashion. This makes multi-file edits genuinely faster instead of
-      // artificially serializing the actual work behind a sleep() in the loop — the delay
-      // was only ever for the *display*, so keep it there, not around the real operation.
-      const results = filesToApply.map((f) => ({ f, result: applyFileOps([f]) }));
+
+      // Optional review-before-applying: only meaningfully protective for EDITS to existing
+      // files (something could be overwritten) — new file creation always applies immediately,
+      // since there's nothing to lose and undo/redo already covers reverting it if unwanted.
+      const reviewMode = isReviewModeEnabled();
+      const editsToExisting = filesToApply.filter((f) => f.action !== "create" && currentFiles[f.path] !== undefined);
+      const safeToApplyNow = filesToApply.filter((f) => !(reviewMode && editsToExisting.includes(f)));
+      pendingReview = reviewMode ? editsToExisting : [];
+
+      // Apply the safe ones now (fast, synchronous) — this is the real work, and it
+      // already happens before any of the display delay below, so it's not blocked by it.
+      results = safeToApplyNow.map((f) => ({ f, result: applyFileOps([f]) }));
+
+      // Scale the reveal pace by file count: for 1-2 files, a readable ~500ms/file total
+      // pace feels intentional. For a big multi-file generation (5+ files), waiting
+      // 2.5s+ just to *show* work that's already done defeats the point of applying
+      // everything up front — so the per-step delay shrinks as the batch grows.
+      const n = results.length;
+      const stepDelay = n <= 2 ? 350 : n <= 4 ? 180 : 80;
+      const settleDelay = n <= 2 ? 150 : n <= 4 ? 90 : 40;
+
       for (const { f, result } of results) {
-        const isNewFile = !result.touched.includes(f.path) ? false : true;
         const verb = (f.action === "create" || currentFiles[f.path] === f.content) ? "Creating" : "Editing";
         updateStatus(`${verb} ${escapeHtml(f.path)}...`);
-        await sleep(350); // just long enough to read the step, not a real processing delay anymore
+        await sleep(stepDelay);
         if (result.failed.length) anyEditFailed = true;
         const doneVerb = f.action === "create" ? "Created" : "Updated";
         const label = result.failed.length
           ? `Edit skipped (no match): ${escapeHtml(f.path)}`
           : `${doneVerb} ${escapeHtml(f.path)}`;
         updateStatus(label);
-        await sleep(150);
+        await sleep(settleDelay);
       }
-      finishStatus(anyEditFailed ? "Done — with a skipped edit" : "Done");
+      finishStatus(anyEditFailed || pendingReview.length ? "Done — review pending" : "Done");
       renderFileList();
       $("projectSub").textContent = `${Object.keys(currentFiles).length} files`;
     } else {
       clearStatus();
     }
 
-    const touchedFiles = filesToApply.map((f) => f.path);
+    const touchedFiles = results.map(({ f }) => f.path);
     const botMsg = { role: "bot", content: replyText, fileChips: touchedFiles, id: genId(), ts: Date.now() };
     currentChat.push(botMsg);
     saveChat(currentProjectId, currentChat, chatSummary);
     appendMsgToDom("bot", replyText, touchedFiles, { id: botMsg.id, ts: botMsg.ts });
+
+    if (pendingReview.length) {
+      renderPendingReviewCard(pendingReview);
+    }
     haptic("success");
   } catch (e) {
     if (streamingBubble) streamingBubble.div.remove();
