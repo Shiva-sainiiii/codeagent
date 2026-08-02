@@ -941,3 +941,247 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   background: none; border: none; color: var(--text-faint);
   display: flex; align-items: center; justify-content: center; padding: 0;
 }
+
+/* ========== SKELETON LOADING ========== */
+.skeleton-item { pointer-events: none; }
+.skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--bg-elev-3);
+}
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.skeleton-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.preview-skeleton {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.preview-skeleton .skeleton-line { height: 16px; }
+
+/* ========== PULL TO REFRESH ========== */
+.pull-refresh-indicator {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 0;
+  overflow: visible;
+  position: relative;
+  z-index: 5;
+  transition: transform 0.2s ease;
+}
+.pull-refresh-indicator .status-spinner {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  margin-top: 8px;
+}
+.pull-refresh-indicator.ready .status-spinner,
+.pull-refresh-indicator.refreshing .status-spinner {
+  opacity: 1;
+}
+
+/* ========== KEYBOARD-AWARE ========== */
+#app.keyboard-open .input-bar {
+  padding-bottom: 10px; /* keyboard already covers safe-area, don't double-pad */
+}
+
+/* ========== MESSAGE SEARCH ========== */
+.search-input-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+.search-input-wrap svg.icon { color: var(--text-faint); flex-shrink: 0; }
+.search-input-wrap input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+}
+.search-input-wrap input:focus { outline: none; }
+.search-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 14px;
+}
+.search-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+  padding: 30px 20px;
+}
+.search-result-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.search-result-role {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--icon-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.search-result-snippet {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.search-result-snippet mark {
+  background: var(--icon-accent-dim);
+  color: var(--icon-accent);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.search-highlight-flash {
+  animation: search-flash 1.5s ease;
+}
+@keyframes search-flash {
+  0%, 100% { background: transparent; }
+  20% { background: var(--icon-accent-dim); }
+}
+
+/* ========== BULK FIND/REPLACE ========== */
+.bulk-replace-preview {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 14px;
+}
+.bulk-replace-summary {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.bulk-replace-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elev-2);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+}
+.bulk-replace-file-row svg.icon { color: var(--icon-accent); flex-shrink: 0; }
+.bulk-replace-file-row span:nth-child(2) {
+  flex: 1;
+  font-family: "SF Mono", "JetBrains Mono", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bulk-replace-count {
+  color: var(--text-faint);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.modal-btn-ok:disabled { opacity: 0.4; }
+
+/* ========== PLAN CONFIRMATION ========== */
+.plan-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.plan-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--bg-elev-2);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.plan-step-num {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--icon-accent-dim);
+  color: var(--icon-accent);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.plan-step-text {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+/* ========== SYNTAX HIGHLIGHTING (code view) ========== */
+.code-view-body {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+.code-view-highlight {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 14px;
+  font-family: "SF Mono", "JetBrains Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  pointer-events: none;
+}
+.code-view-highlight pre {
+  margin: 0;
+  background: none !important;
+}
+.code-view-highlight code {
+  background: none !important;
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.code-view-textarea {
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  caret-color: var(--text);
+}
+.code-view-textarea.raw-visible {
+  position: relative;
+  color: #d4e2f0;
+}
+.code-view-highlight.hidden { display: none; }
+
+/* Minimal Prism token colors, tuned to this app's palette rather than importing a full
+   Prism theme stylesheet (keeps this dependency-light — only the highlighter core +
+   language grammars are loaded from CDN, not a separate theme file). */
+.token.comment { color: var(--text-faint); }
+.token.string, .token.attr-value { color: #9fd88e; }
+.token.number, .token.boolean { color: #d19a66; }
+.token.keyword, .token.selector, .token.tag { color: #6ea8fe; }
+.token.function, .token.class-name { color: #e5c07b; }
+.token.punctuation, .token.operator { color: var(--text-dim); }
+.token.property, .token.attr-name { color: #c792ea; }
