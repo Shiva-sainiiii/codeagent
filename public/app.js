@@ -836,6 +836,13 @@ $("bulkFindInput").addEventListener("input", previewBulkReplace);
 $("bulkReplaceInput").addEventListener("input", previewBulkReplace);
 $("bulkReplaceConfirmBtn").addEventListener("click", applyBulkReplace);
 
+// Review mode toggle
+$("reviewModeToggle").addEventListener("click", () => {
+  const newState = !isReviewModeEnabled();
+  setReviewModeEnabled(newState);
+  haptic("tap");
+});
+
 // Plan confirmation
 $("planCancelBtn").addEventListener("click", closePlanConfirm);
 $("planConfirmBtn").addEventListener("click", confirmPlanAndExecute);
@@ -845,6 +852,7 @@ $("planConfirmBtn").addEventListener("click", confirmPlanAndExecute);
   initVoiceInput();
   initKeyboardAwareScroll();
   initPullToRefresh();
+  setReviewModeEnabled(isReviewModeEnabled()); // sync toggle visual state with stored preference
 
   const projects = listProjects();
   const ids = Object.keys(projects);
@@ -856,3 +864,86 @@ $("planConfirmBtn").addEventListener("click", confirmPlanAndExecute);
     createProject("My First Project");
   }
 })();
+
+// ---------- REVIEW MODE (optional review-before-applying for file edits) ----------
+// Off by default — undo/redo already provides a safety net after the fact. This is for
+// users who'd rather catch a bad edit before it lands, at the cost of an extra tap per
+// edited file. New file creation is never gated (nothing to overwrite).
+function isReviewModeEnabled() {
+  return localStorage.getItem("codeagent:reviewMode") === "1";
+}
+function setReviewModeEnabled(on) {
+  localStorage.setItem("codeagent:reviewMode", on ? "1" : "0");
+  const toggle = $("reviewModeToggle");
+  toggle.classList.toggle("on", on);
+  toggle.setAttribute("aria-checked", String(on));
+}
+
+// Renders an inline "pending changes" card with a real diff and Accept/Reject actions
+// for each file the AI wants to edit but hasn't been applied yet.
+function renderPendingReviewCard(pendingFiles) {
+  const log = $("chatLog");
+  const div = document.createElement("div");
+  div.className = "msg review-card";
+
+  const rows = pendingFiles.map((f, i) => {
+    const before = currentFiles[f.path] || "";
+    let after = before;
+    if (Array.isArray(f.edits)) {
+      for (const e of f.edits) {
+        if (e.find && after.includes(e.find)) after = after.replace(e.find, e.replace ?? "");
+      }
+    } else if (f.content) {
+      after = f.content;
+    }
+    const diffLines = computeLineDiff(before, after);
+    const diffHtml = diffLines.map((line) => {
+      const cls = line.type === "added" ? "diff-added" : line.type === "removed" ? "diff-removed" : "diff-same";
+      const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
+      return `<div class="diff-line ${cls}"><span class="diff-prefix">${prefix}</span><span class="diff-text">${escapeHtml(line.text)}</span></div>`;
+    }).join("");
+
+    return `
+      <div class="review-file-block" data-idx="${i}">
+        <div class="review-file-header">
+          ${ICON.file}<span>${escapeHtml(f.path)}</span>
+        </div>
+        <div class="review-diff-preview">${diffHtml}</div>
+        <div class="review-file-actions">
+          <button class="review-btn reject" data-idx="${i}">Reject</button>
+          <button class="review-btn accept" data-idx="${i}">Accept</button>
+        </div>
+      </div>`;
+  }).join("");
+
+  div.innerHTML = `
+    <div class="review-card-header">${ICON.diff}<span>Review ${pendingFiles.length} change${pendingFiles.length === 1 ? "" : "s"} before applying</span></div>
+    ${rows}
+  `;
+
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+
+  div.querySelectorAll(".review-btn.accept").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.idx);
+      const f = pendingFiles[idx];
+      const before = currentFiles[f.path];
+      recordFileSnapshot(currentProjectId, f.path, before, "AI edit (reviewed)");
+      applyFileOps([f]);
+      saveProjectFiles(currentProjectId, currentFiles);
+      renderFileList();
+      $("projectSub").textContent = `${Object.keys(currentFiles).length} files`;
+      div.querySelector(`.review-file-block[data-idx="${idx}"]`).classList.add("resolved-accepted");
+      haptic("success");
+      showToast(`${f.path} applied`);
+    });
+  });
+  div.querySelectorAll(".review-btn.reject").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.idx);
+      div.querySelector(`.review-file-block[data-idx="${idx}"]`).classList.add("resolved-rejected");
+      showToast("Change rejected");
+    });
+  });
+}
