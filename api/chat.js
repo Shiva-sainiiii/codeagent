@@ -210,6 +210,17 @@ function formatRateLimitMessage(lastErr) {
   return "Sab free models abhi busy/rate-limited hain. Exact reset time nahi pata — kuch minute ruk ke, ya thodi der (1-2 ghante) baad try karo.";
 }
 
+// Converts cache_control content-array messages back to plain strings — fallback for
+// providers in the free-model chain that don't accept the Anthropic-style block format.
+function toPlainStringContent(messages) {
+  return messages.map((m) => {
+    if (Array.isArray(m.content)) {
+      return { ...m, content: m.content.map((block) => block.text || "").join("\n") };
+    }
+    return m;
+  });
+}
+
 async function handleStreamingRequest(res, chatMessages) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -324,34 +335,58 @@ module.exports = async (req, res) => {
 
     // Build the trimmed context: system + rolling summary + relevant file context + last messages
     const systemPromptToUse = planOnly ? PLAN_SYSTEM_PROMPT : SYSTEM_PROMPT;
-    const chatMessages = [{ role: "system", content: systemPromptToUse }];
 
-    if (summary) {
-      chatMessages.push({
-        role: "system",
-        content: `Conversation summary so far (older messages, condensed):\n${summary}`,
-      });
+    // Prompt caching: mark the system prompt and file context as cacheable. These are the
+    // two parts of the request most likely to be byte-identical across consecutive turns
+    // in the same conversation (system prompt never changes; file context only changes
+    // when a file is actually edited) — caching them means providers that support this
+    // (Anthropic models via OpenRouter, some others) don't re-bill the full token cost on
+    // every follow-up message, only on the first request and whenever the cached content
+    // actually changes.
+    //
+    // Only used on the non-streaming path, which has a clean retry-with-plain-fallback if
+    // a provider rejects the content-array format (see the 400 handling below). The
+    // streaming path stays on plain string content unconditionally — it's the default,
+    // most-used path, and safely falling back mid-stream is much harder than before any
+    // bytes have been sent, so the small caching upside isn't worth the added fragility there.
+    function buildChatMessages(useCaching) {
+      const sysContent = useCaching
+        ? [{ type: "text", text: systemPromptToUse, cache_control: { type: "ephemeral" } }]
+        : systemPromptToUse;
+      const msgs = [{ role: "system", content: sysContent }];
+
+      if (summary) {
+        msgs.push({
+          role: "system",
+          content: `Conversation summary so far (older messages, condensed):\n${summary}`,
+        });
+      }
+
+      if (fileContext) {
+        const fileText = `Current project files (for context, use exact snippets from here for "find" in edits):\n${fileContext}`;
+        msgs.push({
+          role: "system",
+          content: useCaching
+            ? [{ type: "text", text: fileText, cache_control: { type: "ephemeral" } }]
+            : fileText,
+        });
+      }
+
+      // last 5-6 messages only (trimming already done client-side, but enforce here too)
+      msgs.push(...messages.slice(-6));
+      return msgs;
     }
-
-    if (fileContext) {
-      chatMessages.push({
-        role: "system",
-        content: `Current project files (for context, use exact snippets from here for "find" in edits):\n${fileContext}`,
-      });
-    }
-
-    // last 5-6 messages only (trimming already done client-side, but enforce here too)
-    const recent = messages.slice(-6);
-    chatMessages.push(...recent);
 
     if (planOnly) {
       // Small, cheap call — just a plan, no file content. Reuses the same model chain and
       // retry logic as the main path, but with a tiny max_tokens ceiling since a plan is
-      // a handful of short lines, not code.
+      // a handful of short lines, not code. Plain content — a one-off small call doesn't
+      // benefit meaningfully from caching.
+      const planMessages = buildChatMessages(false);
       let lastPlanErr = null;
       for (const model of MODEL_CHAIN) {
         try {
-          const raw = await callOpenRouter(chatMessages, apiKey, model, 500);
+          const raw = await callOpenRouter(planMessages, apiKey, model, 500);
           const parsed = extractJson(raw);
           const steps = Array.isArray(parsed.steps) ? parsed.steps.filter((s) => typeof s === "string") : [];
           return res.status(200).json({ ok: true, model, planSteps: steps });
@@ -364,11 +399,15 @@ module.exports = async (req, res) => {
     }
 
     if (stream) {
-      return handleStreamingRequest(res, chatMessages);
+      // Streaming stays on plain content — it's the default/primary path, and a mid-stream
+      // fallback for a rejected content format would be much harder to do safely than
+      // before any bytes have been sent (see the non-streaming path's 400 handling below).
+      return handleStreamingRequest(res, buildChatMessages(false));
     }
 
     let lastErr = null;
     let wasTruncated = false;
+    const chatMessages = buildChatMessages(true); // cached version — safe here because of the 400 fallback right below
     for (const model of MODEL_CHAIN) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
@@ -381,8 +420,22 @@ module.exports = async (req, res) => {
             wasTruncated = true;
             break; // retrying the same prompt/model won't fix a token-budget cutoff
           }
+          if (e.status === 400 && attempt === 0) {
+            // Could be caused by a provider that doesn't accept the cache_control
+            // content-array format used for prompt caching — retry once with plain
+            // string content before giving up on this model entirely.
+            try {
+              const plainMessages = toPlainStringContent(chatMessages);
+              const raw = await callOpenRouter(plainMessages, apiKey, model);
+              const parsed = extractJson(raw);
+              return res.status(200).json({ ok: true, model, ...parsed });
+            } catch (e2) {
+              lastErr = e2;
+              break;
+            }
+          }
           if (e.status === 400) {
-            // Malformed request — won't succeed on any model, stop immediately.
+            // Malformed request even without caching — won't succeed on any model, stop immediately.
             return res.status(200).json({
               ok: false,
               reply: "Request format mein dikkat thi. Phir se try karo, ya chhota message bhejo.",
