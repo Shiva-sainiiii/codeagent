@@ -18,6 +18,9 @@
         <span id="projectName">No Project</span>
         <span id="projectSub" class="sub">tap menu to switch</span>
       </div>
+      <button id="searchBtn" class="icon-btn" aria-label="Search messages">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </button>
       <button id="filesBtn" class="icon-btn" aria-label="Files">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
       </button>
@@ -42,6 +45,9 @@
       <div class="drawer-header">
         <h3>Files</h3>
         <div class="file-actions">
+          <button id="bulkReplaceBtn" class="btn-small" title="Find &amp; replace across files">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M10 20H4v-6"/><path d="M4 20 14 10"/></svg>
+          </button>
           <button id="importFilesBtn" class="btn-small">
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             Import
@@ -118,6 +124,50 @@
       </div>
     </div>
 
+    <!-- MESSAGE SEARCH -->
+    <div id="searchOverlay" class="preview-modal hidden">
+      <div class="preview-modal-header">
+        <div class="search-input-wrap">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="searchInput" type="text" placeholder="Search messages in this project..." />
+        </div>
+        <div class="preview-modal-actions">
+          <button id="closeSearchBtn" class="icon-btn small" aria-label="Close">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="searchResults" class="search-results"></div>
+    </div>
+
+    <!-- BULK FIND/REPLACE ACROSS FILES -->
+    <div id="bulkReplaceOverlay" class="modal-overlay hidden">
+      <div class="modal-box">
+        <h3 class="modal-title">Find &amp; Replace</h3>
+        <p class="modal-message">Sabhi files mein ek text ko dusre se replace karo — bina AI call ke, turant.</p>
+        <input id="bulkFindInput" class="modal-input" type="text" placeholder="Find..." style="margin-bottom:8px;" />
+        <input id="bulkReplaceInput" class="modal-input" type="text" placeholder="Replace with..." />
+        <div id="bulkReplacePreview" class="bulk-replace-preview"></div>
+        <div class="modal-actions">
+          <button id="bulkReplaceCancelBtn" class="modal-btn modal-btn-cancel">Cancel</button>
+          <button id="bulkReplaceConfirmBtn" class="modal-btn modal-btn-ok" disabled>Replace All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PLAN CONFIRMATION (shown before executing complex/multi-file requests) -->
+    <div id="planConfirmOverlay" class="modal-overlay hidden">
+      <div class="modal-box">
+        <h3 class="modal-title">Here's the plan</h3>
+        <p class="modal-message">Confirm karo, ya cancel karke apna message edit karo.</p>
+        <div id="planStepsList" class="plan-steps-list"></div>
+        <div class="modal-actions">
+          <button id="planCancelBtn" class="modal-btn modal-btn-cancel">Cancel</button>
+          <button id="planConfirmBtn" class="modal-btn modal-btn-ok">Looks good, go ahead</button>
+        </div>
+      </div>
+    </div>
+
     <!-- FULL-SCREEN LIVE PREVIEW -->
     <div id="previewModal" class="preview-modal hidden">
       <div class="preview-modal-header">
@@ -168,10 +218,14 @@
           </button>
         </div>
       </div>
-      <textarea id="codeViewTextarea" class="code-view-textarea" readonly spellcheck="false"></textarea>
+      <div class="code-view-body">
+        <div id="codeViewHighlight" class="code-view-highlight"></div>
+        <textarea id="codeViewTextarea" class="code-view-textarea" readonly spellcheck="false"></textarea>
+      </div>
     </div>
 
     <!-- CHAT AREA -->
+    <div id="pullRefreshAnchor"></div>
     <main id="chatArea" class="chat-area">
       <div id="chatLog" class="chat-log">
         <div class="empty-state" id="emptyState">
@@ -206,7 +260,6 @@
         </div>
       </div>
     </main>
-
 
     <!-- INPUT BAR -->
     <footer class="input-bar">
@@ -245,6 +298,15 @@
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <!-- Modular scripts — order matters: each file depends on globals/functions defined
+       in the ones before it (no bundler here, so plain script tags + load order). -->
+  <script src="js/icons.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/templates.js"></script>
+  <script src="js/modals.js"></script>
+  <script src="js/preview.js"></script>
+  <script src="js/chat-render.js"></script>
+  <script src="js/chat-logic.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
