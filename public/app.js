@@ -90,6 +90,7 @@ function renderFileList() {
   }
   list.innerHTML = paths.map((path) => {
     const showDiffUndo = hasHistory(path);
+    const showRedo = hasRedoHistory(path);
     return `
     <div class="file-item">
       <div class="file-item-top">
@@ -97,6 +98,7 @@ function renderFileList() {
         <div class="file-item-actions">
           ${showDiffUndo ? `<button class="mini-btn" data-action="diff" data-path="${escapeAttr(path)}">${ICON.diff}</button>` : ""}
           ${showDiffUndo ? `<button class="mini-btn" data-action="undo" data-path="${escapeAttr(path)}">${ICON.undo}</button>` : ""}
+          ${showRedo ? `<button class="mini-btn" data-action="redo" data-path="${escapeAttr(path)}">${ICON.redo}</button>` : ""}
           <button class="mini-btn" data-action="preview" data-path="${escapeAttr(path)}">${ICON.eye}</button>
           <button class="mini-btn" data-action="code" data-path="${escapeAttr(path)}">${ICON.code}</button>
           <button class="mini-btn" data-action="copy" data-path="${escapeAttr(path)}">${ICON.copy}</button>
@@ -120,6 +122,16 @@ function renderFileList() {
         showToast(`${el.dataset.path} reverted`);
       } else {
         showToast("No earlier version found");
+      }
+    })
+  );
+  list.querySelectorAll('[data-action="redo"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      if (redoFileChange(el.dataset.path)) {
+        renderFileList();
+        showToast(`${el.dataset.path} redone`);
+      } else {
+        showToast("Nothing to redo");
       }
     })
   );
@@ -870,7 +882,12 @@ $("planConfirmBtn").addEventListener("click", confirmPlanAndExecute);
 // users who'd rather catch a bad edit before it lands, at the cost of an extra tap per
 // edited file. New file creation is never gated (nothing to overwrite).
 function isReviewModeEnabled() {
-  return localStorage.getItem("codeagent:reviewMode") === "1";
+  // Defaults ON (opt-out, not opt-in) — reviewing an edit before it lands is the safer
+  // default for anyone new to the app; localStorage only stores "0" once someone actually
+  // turns it off, so existing users who never touched the toggle also get the safer
+  // behavior going forward rather than being silently switched over.
+  const stored = localStorage.getItem("codeagent:reviewMode");
+  return stored === null ? true : stored === "1";
 }
 function setReviewModeEnabled(on) {
   localStorage.setItem("codeagent:reviewMode", on ? "1" : "0");
@@ -916,25 +933,63 @@ function renderPendingReviewCard(pendingFiles) {
       </div>`;
   }).join("");
 
+  const bulkActionsHtml = pendingFiles.length > 1
+    ? `<div class="review-bulk-actions">
+        <button class="review-bulk-btn reject-all" data-action="reject-all">Reject all</button>
+        <button class="review-bulk-btn accept-all" data-action="accept-all">Accept all</button>
+      </div>`
+    : "";
+
   div.innerHTML = `
     <div class="review-card-header">${ICON.diff}<span>Review ${pendingFiles.length} change${pendingFiles.length === 1 ? "" : "s"} before applying</span></div>
     ${rows}
+    ${bulkActionsHtml}
   `;
 
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
 
+  function acceptOne(idx) {
+    const f = pendingFiles[idx];
+    const block = div.querySelector(`.review-file-block[data-idx="${idx}"]`);
+    if (block.classList.contains("resolved-accepted") || block.classList.contains("resolved-rejected")) return;
+    const before = currentFiles[f.path];
+    recordFileSnapshot(currentProjectId, f.path, before, "AI edit (reviewed)");
+    const result = applyFileOps([f]);
+    block.classList.add("resolved-accepted");
+    if (result.warnings && result.warnings.length) {
+      addSystemMsg(`⚠ ${result.warnings.join("\n")}`);
+    }
+  }
+  function rejectOne(idx) {
+    const block = div.querySelector(`.review-file-block[data-idx="${idx}"]`);
+    if (block.classList.contains("resolved-accepted") || block.classList.contains("resolved-rejected")) return;
+    block.classList.add("resolved-rejected");
+  }
+
+  const acceptAllBtn = div.querySelector('[data-action="accept-all"]');
+  if (acceptAllBtn) acceptAllBtn.addEventListener("click", () => {
+    pendingFiles.forEach((_, idx) => acceptOne(idx));
+    saveProjectFiles(currentProjectId, currentFiles);
+    renderFileList();
+    $("projectSub").textContent = `${Object.keys(currentFiles).length} files`;
+    haptic("success");
+    showToast(`${pendingFiles.length} file(s) applied`);
+  });
+  const rejectAllBtn = div.querySelector('[data-action="reject-all"]');
+  if (rejectAllBtn) rejectAllBtn.addEventListener("click", () => {
+    pendingFiles.forEach((_, idx) => rejectOne(idx));
+    showToast("All changes rejected");
+  });
+
   div.querySelectorAll(".review-btn.accept").forEach((btn) => {
     btn.addEventListener("click", () => {
       const idx = Number(btn.dataset.idx);
       const f = pendingFiles[idx];
-      const before = currentFiles[f.path];
-      recordFileSnapshot(currentProjectId, f.path, before, "AI edit (reviewed)");
-      applyFileOps([f]);
+      acceptOne(idx);
       saveProjectFiles(currentProjectId, currentFiles);
       renderFileList();
       $("projectSub").textContent = `${Object.keys(currentFiles).length} files`;
-      div.querySelector(`.review-file-block[data-idx="${idx}"]`).classList.add("resolved-accepted");
       haptic("success");
       showToast(`${f.path} applied`);
     });
@@ -942,7 +997,7 @@ function renderPendingReviewCard(pendingFiles) {
   div.querySelectorAll(".review-btn.reject").forEach((btn) => {
     btn.addEventListener("click", () => {
       const idx = Number(btn.dataset.idx);
-      div.querySelector(`.review-file-block[data-idx="${idx}"]`).classList.add("resolved-rejected");
+      rejectOne(idx);
       showToast("Change rejected");
     });
   });

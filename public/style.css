@@ -384,6 +384,33 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   white-space: pre-wrap;
 }
 
+/* AI REASONING (shown before file changes are applied) */
+.msg.reasoning {
+  align-self: flex-start;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 92%;
+  background: var(--icon-accent-dim);
+  border: 1px solid var(--icon-accent-dim);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 6px 14px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.reasoning-icon {
+  color: var(--icon-accent);
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: inline-flex;
+}
+.reasoning-text {
+  color: var(--text);
+  opacity: 0.9;
+  white-space: pre-wrap;
+}
+
 /* IMPORT STATUS CARD — left-aligned, icon-led (not centered plain text) */
 .msg.import-card {
   align-self: flex-start;
@@ -1310,4 +1337,27 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   display: block;
   color: var(--text-faint);
   font-size: 11px;
+}
+.review-bulk-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.review-bulk-btn {
+  padding: 7px 14px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+}
+.review-bulk-btn.reject-all {
+  background: none;
+  color: var(--danger);
+}
+.review-bulk-btn.accept-all {
+  background: var(--icon-accent);
+  color: #041226;
 }
