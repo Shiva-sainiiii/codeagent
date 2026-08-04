@@ -165,14 +165,11 @@ window.addEventListener("message", (e) => {
 });
 
 // ---------- DIFF VIEW ----------
-function openDiffModal(path) {
-  const history = loadFileHistory(currentProjectId);
-  const stack = history[path];
-  if (!stack || !stack.length) return showToast("No earlier version to compare");
-  const previous = stack[stack.length - 1];
-  const current = currentFiles[path] || "";
-  const diffLines = computeLineDiff(previous.content, current);
-
+// Shared renderer so both the history-based diff (undo/redo comparisons) and a pending
+// AI-review diff (before it's even applied) go through the exact same rendering path —
+// same styling, same full-screen modal, no duplicated markup logic between the two.
+function renderDiffModal(path, before, after) {
+  const diffLines = computeLineDiff(before, after);
   const html = diffLines.map((line) => {
     const cls = line.type === "added" ? "diff-added" : line.type === "removed" ? "diff-removed" : "diff-same";
     const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
@@ -185,6 +182,22 @@ function openDiffModal(path) {
   modal.dataset.currentPath = path;
   modal.classList.remove("hidden");
   requestAnimationFrame(() => modal.classList.add("show"));
+}
+
+function openDiffModal(path) {
+  const history = loadFileHistory(currentProjectId);
+  const stack = history[path];
+  if (!stack || !stack.length) return showToast("No earlier version to compare");
+  const previous = stack[stack.length - 1];
+  const current = currentFiles[path] || "";
+  renderDiffModal(path, previous.content, current);
+}
+
+// Full-screen diff for a change that hasn't been applied yet (the pending-review card's
+// "expand" button) — takes the before/after pair directly instead of reading file history,
+// since a pending change by definition isn't in currentFiles or history yet.
+function openDiffModalFromPair(path, before, after) {
+  renderDiffModal(path, before, after);
 }
 function closeDiffModal() {
   const modal = $("diffModal");
