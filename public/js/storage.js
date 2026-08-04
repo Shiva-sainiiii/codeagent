@@ -4,6 +4,21 @@
 
 const $ = (id) => document.getElementById(id);
 
+// ---------- SHARED HTML-ESCAPING HELPERS ----------
+// Moved here (first file loaded, after icons.js) so every module can safely use these
+// from the moment its own top-level code runs, without depending on load order relative
+// to app.js — they were previously defined at the bottom of app.js (last file loaded),
+// which happened to work only because nothing called them until a user interaction fired
+// well after all scripts had finished loading. Still fine either way at runtime, but this
+// removes a latent footgun for future code that might call them earlier (e.g. at module
+// init time) as the app grows.
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function escapeAttr(s) {
+  return s.replace(/"/g, "&quot;");
+}
+
 // ---------- STATE ----------
 let currentProjectId = localStorage.getItem("codeagent:lastProject") || null;
 let currentFiles = {};      // {path: content}
