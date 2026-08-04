@@ -190,13 +190,6 @@ async function downloadZip() {
 }
 
 // ---------- UI HELPERS ----------
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-function escapeAttr(s) {
-  return s.replace(/"/g, "&quot;");
-}
-
 function openDrawer() {
   try {
     renderProjectList();
@@ -924,6 +917,7 @@ function renderPendingReviewCard(pendingFiles) {
       <div class="review-file-block" data-idx="${i}">
         <div class="review-file-header">
           ${ICON.file}<span>${escapeHtml(f.path)}</span>
+          <button class="review-expand-btn" data-action="expand" data-idx="${i}" title="View full-screen">${ICON.eye}</button>
         </div>
         <div class="review-diff-preview">${diffHtml}</div>
         <div class="review-file-actions">
@@ -932,6 +926,21 @@ function renderPendingReviewCard(pendingFiles) {
         </div>
       </div>`;
   }).join("");
+
+  // Keep the before/after pairs around (not just the rendered HTML) so the expand button
+  // can show the exact same diff full-screen without recomputing anything.
+  const diffPairs = pendingFiles.map((f) => {
+    const before = currentFiles[f.path] || "";
+    let after = before;
+    if (Array.isArray(f.edits)) {
+      for (const e of f.edits) {
+        if (e.find && after.includes(e.find)) after = after.replace(e.find, e.replace ?? "");
+      }
+    } else if (f.content) {
+      after = f.content;
+    }
+    return { before, after };
+  });
 
   const bulkActionsHtml = pendingFiles.length > 1
     ? `<div class="review-bulk-actions">
@@ -967,8 +976,7 @@ function renderPendingReviewCard(pendingFiles) {
     block.classList.add("resolved-rejected");
   }
 
-  const acceptAllBtn = div.querySelector('[data-action="accept-all"]');
-  if (acceptAllBtn) acceptAllBtn.addEventListener("click", () => {
+  const acceptAllBtn = div.querySelector('[data-action="accept-all"]');  if (acceptAllBtn) acceptAllBtn.addEventListener("click", () => {
     pendingFiles.forEach((_, idx) => acceptOne(idx));
     saveProjectFiles(currentProjectId, currentFiles);
     renderFileList();
@@ -980,6 +988,20 @@ function renderPendingReviewCard(pendingFiles) {
   if (rejectAllBtn) rejectAllBtn.addEventListener("click", () => {
     pendingFiles.forEach((_, idx) => rejectOne(idx));
     showToast("All changes rejected");
+  });
+
+  // Full-screen view of a single pending file's diff — the inline preview is capped at
+  // 160px tall (readable for a small change, cramped for a big one), so this reuses the
+  // existing full-screen diff modal to show the exact same before/after without needing
+  // a separate viewer built just for this.
+  div.querySelectorAll('[data-action="expand"]').forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const idx = Number(btn.dataset.idx);
+      const f = pendingFiles[idx];
+      const { before, after } = diffPairs[idx];
+      openDiffModalFromPair(f.path, before, after);
+    });
   });
 
   div.querySelectorAll(".review-btn.accept").forEach((btn) => {
