@@ -91,16 +91,30 @@ function buildTrimmedMessages() {
 // need 18k chars of file context riding along — only send it when the message references
 // a file by name/extension, or uses action verbs that imply working on existing code.
 function messageNeedsFileContext(text) {
-  const t = text.toLowerCase();
+  const t = text.toLowerCase().trim();
   const paths = Object.keys(currentFiles);
+  if (!paths.length) return false;
+
+  // Very short casual messages ("hi", "thanks", "ok", "kya haal hai") shouldn't drag in
+  // file content just because they happen to contain a common word like "kya" — only
+  // apply the broader inspection-keyword check below to messages that look like they're
+  // actually asking about the project (a handful of words or more).
+  const wordCount = t.split(/\s+/).filter(Boolean).length;
+
   // mentions an actual file name from the project
   if (paths.some((p) => t.includes(p.toLowerCase()) || t.includes(p.split("/").pop().toLowerCase()))) return true;
   // mentions a code file extension generically
   if (/\.(html?|css|js|jsx|tsx?|py|json)\b/.test(t)) return true;
   // action verbs that imply modifying/looking at existing code
   if (/\b(fix|edit|update|change|add|remove|delete|refactor|debug|improve|isme|ismein|iska|isko|ye|yeh)\b/.test(t)) return true;
+  // read-only / inspection requests — these don't modify anything but still need the
+  // actual file content to answer meaningfully. Missing this was the cause of "check
+  // bugs" or "review my code" getting a blind "please share your file" reply even
+  // though the file was sitting right there in the project the whole time. Gated behind
+  // wordCount >= 2 so a bare "kya" or "how" in a casual one-word message doesn't trigger it.
+  if (wordCount >= 2 && /\b(check|review|explain|analyze|analyse|samajh|dekho|dekh|batao|bug|error|issue|problem|kaise|kyu|kyun)\b/.test(t)) return true;
   // very first message in a project that already has files — safe default to include
-  if (paths.length && currentChat.filter((m) => m.role === "user").length <= 1) return true;
+  if (currentChat.filter((m) => m.role === "user").length <= 1) return true;
   return false;
 }
 
