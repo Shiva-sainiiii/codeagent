@@ -169,8 +169,105 @@ async function maybeSummarize() {
   currentChat = currentChat.slice(-6);
 }
 
+// ---------- LIGHTWEIGHT SYNTAX VERIFICATION ----------
+// A cheap, local (zero-LLM-cost) sanity check run right after a file is written — not a
+// real linter, just enough to catch the most common breakages (mismatched braces/tags,
+// outright unparseable JS) before the user discovers them by opening the preview and
+// seeing a blank/broken page. Deliberately conservative: only flags things it's confident
+// are wrong, never blocks the write itself (the file is already applied by the time this
+// runs — this only surfaces a warning, undo/redo remains the way to actually revert it).
+function verifyFileSyntax(path, content) {
+  const ext = (path.split(".").pop() || "").toLowerCase();
+
+  if (ext === "js" || ext === "jsx" || ext === "mjs") {
+    try {
+      // eslint-disable-next-line no-new-func
+      new Function(content);
+    } catch (e) {
+      return `Possible JS syntax error in ${path}: ${e.message}`;
+    }
+    return null;
+  }
+
+  if (ext === "json") {
+    try {
+      JSON.parse(content);
+    } catch (e) {
+      return `Invalid JSON in ${path}: ${e.message}`;
+    }
+    return null;
+  }
+
+  if (ext === "html" || ext === "htm") {
+    try {
+      const doc = new DOMParser().parseFromString(content, "text/html");
+      const err = doc.querySelector("parsererror");
+      if (err) return `HTML parse error in ${path}`;
+      // DOMParser is very forgiving (auto-closes unclosed tags), so it won't catch most
+      // real-world mistakes on its own. A simple open/close tag count is a decent
+      // additional signal for the specific case that actually breaks a page silently:
+      // an unclosed <div>/<script>/etc that swallows the rest of the document.
+      const voidTags = new Set(["area","base","br","col","embed","hr","img","input","link","meta","param","source","track","wbr"]);
+      const tagPattern = /<\/?([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*?(\/?)>/g;
+      const stack = [];
+      let m;
+      while ((m = tagPattern.exec(content))) {
+        const [full, tagName, selfClose] = m;
+        const lower = tagName.toLowerCase();
+        if (voidTags.has(lower) || selfClose === "/" || full.startsWith("<!")) continue;
+        if (full.startsWith("</")) {
+          const idx = stack.lastIndexOf(lower);
+          if (idx === -1) continue; // stray closing tag — ignore, not worth flagging
+          stack.splice(idx, 1);
+        } else {
+          stack.push(lower);
+        }
+      }
+      if (stack.length) {
+        return `Possible unclosed tag(s) in ${path}: <${stack.join(">, <")}>`;
+      }
+    } catch (e) {
+      return null; // DOMParser unavailable or threw for an unrelated reason — don't false-flag
+    }
+    return null;
+  }
+
+  return null; // no check defined for this file type
+}
+
+// Attempts to locate `find` inside `content` even when it doesn't match byte-for-byte —
+// handles the most common near-misses (extra/missing blank lines, trailing whitespace,
+// tabs vs spaces, a stray semicolon) without going as far as a full fuzzy-diff library.
+// Returns the exact substring of `content` to replace, or null if no confident match.
+function findFuzzyMatch(content, find) {
+  if (!find) return null;
+
+  // Whitespace-normalized comparison: collapse all runs of whitespace to a single space
+  // on both sides, then look for that normalized snippet inside a same-length window in
+  // a normalized version of the content. If found, map back to the real substring.
+  const normalize = (s) => s.replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n").trim();
+  const normFind = normalize(find);
+  if (!normFind) return null;
+
+  const lines = content.split("\n");
+  const findLineCount = find.split("\n").length;
+
+  // Slide a window of findLineCount (and +/-1 for a possible extra/missing blank line)
+  // over the actual file lines, compare normalized, and return the first confident hit.
+  for (const windowSize of [findLineCount, findLineCount + 1, Math.max(1, findLineCount - 1)]) {
+    for (let i = 0; i + windowSize <= lines.length; i++) {
+      const candidate = lines.slice(i, i + windowSize).join("\n");
+      if (normalize(candidate) === normFind) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
 // ---------- APPLY LLM FILE OPS ----------
-// Returns { touched: [paths actually changed], failed: [paths where an edit snippet didn't match] }
+// Returns { touched: [paths actually changed], failed: [paths where an edit snippet didn't match],
+//           warnings: [syntax warning strings for touched files] }
 function applyFileOps(files) {
   const touched = [];
   const failed = [];
@@ -194,7 +291,20 @@ function applyFileOps(files) {
           if (e.find && content.includes(e.find)) {
             content = content.replace(e.find, e.replace ?? "");
             fileChanged = true;
-          } else if (e.find) {
+            continue;
+          }
+          if (e.find) {
+            // Exact match failed — before giving up, try a whitespace-tolerant match.
+            // Model-generated "find" snippets commonly drift by a stray space/blank line
+            // from the real file content; this recovers those cases instead of silently
+            // dropping the edit, while still refusing to guess on a genuinely absent snippet.
+            const fuzzyMatch = findFuzzyMatch(content, e.find);
+            if (fuzzyMatch !== null) {
+              content = content.replace(fuzzyMatch, e.replace ?? "");
+              fileChanged = true;
+              console.warn(`Edit snippet matched fuzzily (not exact) in ${f.path}`);
+              continue;
+            }
             console.warn(`Edit snippet not found in ${f.path}:`, e.find);
             fileHadMiss = true;
           }
@@ -213,7 +323,14 @@ function applyFileOps(files) {
     }
   }
   if (touched.length) saveProjectFiles(currentProjectId, currentFiles);
-  return { touched, failed };
+
+  const warnings = [];
+  for (const path of touched) {
+    const warning = verifyFileSyntax(path, currentFiles[path]);
+    if (warning) warnings.push(warning);
+  }
+
+  return { touched, failed, warnings };
 }
 
 // ---------- SEND MESSAGE ----------
@@ -383,24 +500,36 @@ async function runLlmRequest(text) {
 
     const replyText = data.reply || "…";
     const filesToApply = data.files || [];
+    const reasoningText = (data.reasoning || "").trim();
 
     // Remove the temporary streaming bubble now — the real, fully-formed bot message
     // (with footer, file chips, etc.) replaces it below via the normal appendMsgToDom path.
     if (streamingBubble) streamingBubble.div.remove();
+
+    // Show the model's short "what/why" BEFORE any files are touched — this is the
+    // step-by-step visibility that was previously only a one-time plan-mode popup; now
+    // it shows up on every file-changing turn, right as execution begins, not just for
+    // requests that triggered the separate plan-confirmation flow.
+    if (reasoningText && filesToApply.length) {
+      addReasoningMsg(reasoningText);
+    }
 
     let results = [];
     let pendingReview = [];
 
     if (filesToApply.length) {
       let anyEditFailed = false;
+      const allWarnings = [];
 
-      // Optional review-before-applying: only meaningfully protective for EDITS to existing
-      // files (something could be overwritten) — new file creation always applies immediately,
-      // since there's nothing to lose and undo/redo already covers reverting it if unwanted.
+      // Optional review-before-applying: when on, ALL AI-proposed file changes (new files
+      // included, not just edits to existing ones) wait for an explicit Accept before they
+      // touch currentFiles. New-file creation used to skip review on the theory that "there's
+      // nothing to lose" — but that's exactly backwards for someone who wants to see what
+      // the AI is about to add before it lands, especially for a first look at generated
+      // code. Undo/redo remains a good safety net regardless, this is just an earlier gate.
       const reviewMode = isReviewModeEnabled();
-      const editsToExisting = filesToApply.filter((f) => f.action !== "create" && currentFiles[f.path] !== undefined);
-      const safeToApplyNow = filesToApply.filter((f) => !(reviewMode && editsToExisting.includes(f)));
-      pendingReview = reviewMode ? editsToExisting : [];
+      const safeToApplyNow = reviewMode ? [] : filesToApply;
+      pendingReview = reviewMode ? filesToApply : [];
 
       // Apply the safe ones now (fast, synchronous) — this is the real work, and it
       // already happens before any of the display delay below, so it's not blocked by it.
@@ -419,6 +548,7 @@ async function runLlmRequest(text) {
         updateStatus(`${verb} ${escapeHtml(f.path)}...`);
         await sleep(stepDelay);
         if (result.failed.length) anyEditFailed = true;
+        if (result.warnings && result.warnings.length) allWarnings.push(...result.warnings);
         const doneVerb = f.action === "create" ? "Created" : "Updated";
         const label = result.failed.length
           ? `Edit skipped (no match): ${escapeHtml(f.path)}`
@@ -429,6 +559,9 @@ async function runLlmRequest(text) {
       finishStatus(anyEditFailed || pendingReview.length ? "Done — review pending" : "Done");
       renderFileList();
       $("projectSub").textContent = `${Object.keys(currentFiles).length} files`;
+      if (allWarnings.length) {
+        addSystemMsg(`⚠ ${allWarnings.join("\n")}`);
+      }
     } else {
       clearStatus();
     }

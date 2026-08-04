@@ -288,34 +288,52 @@ function ensurePrismLoaded() {
 async function applySyntaxHighlight(path, content) {
   const highlightEl = $("codeViewHighlight");
   if (!highlightEl) return;
+
+  // Show plain (escaped) text IMMEDIATELY — never leave the box blank while we wait on
+  // the CDN. This was the actual cause of "code view opens blank": Prism loads async,
+  // and on a slow/flaky connection (or if the CDN request fails entirely) the highlight
+  // box's innerHTML was never set at all, so nothing ever appeared. Painting plain text
+  // first means the user always sees the code instantly; highlighting is a progressive
+  // upgrade on top of that, not a blocking requirement.
+  highlightEl.innerHTML = `<pre><code>${escapeHtml(content)}</code></pre>`;
+
   const ext = (path.split(".").pop() || "").toLowerCase();
   const lang = PRISM_LANG_MAP[ext];
+  if (!lang) return; // unsupported language — plain text already shown, nothing more to do
 
-  if (!lang) {
-    // Unsupported language for highlighting — just show the escaped plain text so it's
-    // still legible, no highlighting attempted.
-    highlightEl.innerHTML = `<pre><code>${escapeHtml(content)}</code></pre>`;
-    return;
+  // Guard the CDN load with a timeout so a hung/slow request can't leave us stuck —
+  // plain text (already painted above) stays as the permanent fallback in that case.
+  try {
+    await Promise.race([
+      ensurePrismLoaded(),
+      new Promise((resolve) => setTimeout(resolve, 4000)),
+    ]);
+  } catch (e) {
+    return; // plain text already shown
   }
 
-  await ensurePrismLoaded();
-  if (!window.Prism || !window.Prism.languages) {
-    highlightEl.innerHTML = `<pre><code>${escapeHtml(content)}</code></pre>`;
-    return;
-  }
+  if (!window.Prism || !window.Prism.languages) return; // plain text already shown
 
-  // The autoloader fetches the specific language grammar on demand; give it a moment on
-  // first use for a given language, then highlight.
+  // Bail out silently if the user has since closed the modal or switched files while we
+  // were waiting on the network — avoids painting stale highlighted content over a
+  // different file that may already be showing.
+  if ($("codeViewTextarea").dataset.path !== path) return;
+
   try {
     if (!window.Prism.languages[lang] && window.Prism.plugins?.autoloader) {
-      await new Promise((resolve) => {
-        window.Prism.plugins.autoloader.loadLanguages([lang], resolve, resolve);
-      });
+      await Promise.race([
+        new Promise((resolve) => {
+          window.Prism.plugins.autoloader.loadLanguages([lang], resolve, resolve);
+        }),
+        new Promise((resolve) => setTimeout(resolve, 4000)),
+      ]);
     }
+    if ($("codeViewTextarea").dataset.path !== path) return; // stale by now — skip
     const grammar = window.Prism.languages[lang] || window.Prism.languages.markup;
     const highlighted = window.Prism.highlight(content, grammar, lang);
     highlightEl.innerHTML = `<pre class="language-${lang}"><code>${highlighted}</code></pre>`;
   } catch (e) {
-    highlightEl.innerHTML = `<pre><code>${escapeHtml(content)}</code></pre>`;
+    // Highlighting failed for some reason — plain text (painted at the top of this
+    // function) is already there and stays as-is. Nothing to do.
   }
 }

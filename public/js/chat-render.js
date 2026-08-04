@@ -232,11 +232,13 @@ function appendMsgToDom(role, content, fileChips, meta) {
       const row = document.createElement("div");
       row.className = "file-chip-row";
       const showDiffUndo = hasHistory(path);
+      const showRedo = hasRedoHistory(path);
       row.innerHTML = `
         <button class="file-chip-name" data-action="open">${ICON.file} <span>${escapeHtml(path)}</span></button>
         <div class="file-chip-actions">
           ${showDiffUndo ? `<button class="chip-action-btn" data-action="diff" title="View changes">${ICON.diff}</button>` : ""}
           ${showDiffUndo ? `<button class="chip-action-btn" data-action="undo" title="Undo this edit">${ICON.undo}</button>` : ""}
+          ${showRedo ? `<button class="chip-action-btn" data-action="redo" title="Redo this edit">${ICON.redo}</button>` : ""}
           <button class="chip-action-btn" data-action="code" title="View/edit code">${ICON.code}</button>
           <button class="chip-action-btn" data-action="copy" title="Copy">${ICON.copy}</button>
           <button class="chip-action-btn" data-action="download" title="Download">${ICON.download}</button>
@@ -256,6 +258,15 @@ function appendMsgToDom(role, content, fileChips, meta) {
           showToast(`${path} reverted`);
         } else {
           showToast("No earlier version found");
+        }
+      });
+      const redoBtn = row.querySelector('[data-action="redo"]');
+      if (redoBtn) redoBtn.addEventListener("click", () => {
+        if (redoFileChange(path)) {
+          renderFileList();
+          showToast(`${path} redone`);
+        } else {
+          showToast("Nothing to redo");
         }
       });
       div.appendChild(row);
@@ -349,6 +360,20 @@ async function shareText(text) {
   } else {
     copyText(text, "Message");
   }
+}
+
+// Shows the AI's short "what I'm about to do and why" before file changes land — the
+// step-by-step visibility a person would otherwise only get once, from the separate
+// plan-confirmation modal. This appears on every file-changing turn, not just ones that
+// were flagged as "complex" enough to trigger a full plan-first pass.
+function addReasoningMsg(text) {
+  const log = $("chatLog");
+  $("emptyState").classList.add("hidden");
+  const div = document.createElement("div");
+  div.className = "msg reasoning";
+  div.innerHTML = `<span class="reasoning-icon">${ICON.listChecks}</span><span class="reasoning-text">${escapeHtml(text)}</span>`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
 }
 
 function addSystemMsg(text) {

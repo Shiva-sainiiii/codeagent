@@ -109,6 +109,20 @@ function recordFileSnapshot(projectId, path, previousContent, label) {
     history[path] = history[path].slice(-MAX_HISTORY_PER_FILE);
   }
   saveFileHistory(projectId, history);
+
+  // A fresh edit invalidates any pending redo for this file — the branch of history that
+  // redo pointed to no longer follows from the current content, so redoing it now would
+  // silently discard this new change and jump back to a stale version instead. Clearing
+  // it here (redo-point label is skipped since that push shouldn't wipe itself) matches
+  // standard editor behavior: undo/redo/new-edit resets the redo stack.
+  if (label !== "redo-point") {
+    const redoKey = `redo:${projectId}`;
+    const redoHistory = safeParse(localStorage.getItem(redoKey), {});
+    if (redoHistory[path] && redoHistory[path].length) {
+      delete redoHistory[path];
+      localStorage.setItem(redoKey, JSON.stringify(redoHistory));
+    }
+  }
 }
 
 function undoFileChange(path) {
@@ -145,6 +159,12 @@ function redoFileChange(path) {
 function hasHistory(path) {
   const history = loadFileHistory(currentProjectId);
   return !!(history[path] && history[path].length);
+}
+
+function hasRedoHistory(path) {
+  const redoKey = `redo:${currentProjectId}`;
+  const redoHistory = safeParse(localStorage.getItem(redoKey), {});
+  return !!(redoHistory[path] && redoHistory[path].length);
 }
 
 // ---------- SIMPLE LINE-BASED DIFF (for the diff view, no external library) ----------
