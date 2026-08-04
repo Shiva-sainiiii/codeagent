@@ -6,23 +6,24 @@ Phone-only, no-terminal dev workflow ke liye chat-based coding assistant. Chat m
 ```
 codeagent/
 ├── api/
-│   └── chat.js        # Vercel serverless fn — OpenRouter proxy, structured JSON, retry+fallback
+│   ├── chat.js        # Vercel serverless fn — OpenRouter proxy, structured JSON, retry+fallback
+│   └── summarize.js   # Small summary endpoint used for folding/rolling summaries
 ├── public/
-│   ├── index.html      # UI shell
-│   ├── style.css        # dark WhatsApp-style theme
-│   └── app.js             # all client logic: state, intent routing, diff-apply, zip, preview
+│   ├── index.html     # UI shell
+│   ├── style.css      # dark WhatsApp-style theme
+│   ├── app.js         # client logic: state, intent routing, diff-apply, zip, preview
+│   └── js/            # extra client-side modules (optional)
 ├── package.json
 ├── vercel.json
-├── .env.example
-└── .gitignore
+└── README.md
 ```
 
 ## How it works
 - **Chat**: messages localStorage me `chat:<projectId>` ke andar save hote hain.
 - **Files**: `project:<projectId>` ke andar `{files: {path: content}, updatedAt}`.
-- **Intent routing**: `app.js` ka `tryLocalIntent()` pehle regex se try karta hai (naya project, list files, delete file, clear chat, zip download) — agar match ho gaya to LLM call hoti hi nahi. Warna request `/api/chat` pe jaati hai.
-- **Token efficiency**: server ko sirf last 6 messages + rolling summary (client-side folded, no extra LLM call) + current file contents bheje jaate hain. Naye file ke liye LLM full content deta hai; existing file edit ke liye LLM sirf `{find, replace}` snippets deta hai jo client-side apply hote hain — poora file dobara nahi likhta.
-- **Fallback**: `api/chat.js` teen free models try karta hai order mein (Nemotron → Llama 3.3 → Gemini Flash), rate-limit/500 pe retry + next-model fallback, sab fail ho to graceful Hinglish error message.
+- **Intent routing**: `app.js` ka `tryLocalIntent()` pehle regex se try karta hai (naya project, list files, delete file, clear chat, zip download) — agar match ho gaya to LLM call hoti hi nahi.
+- **Token efficiency**: server ko sirf last 6 messages + rolling summary (client-side folded, no extra LLM call) + current file contents bheje jaate hain. Naye file ke liye LLM full content deta hai.
+- **Fallback**: `api/chat.js` teen free models try karta hai order mein (Nemotron → Llama 3.3 → Gemini Flash), rate-limit/500 pe retry + next-model fallback, sab fail ho to graceful Hinglish error return karta hai.
 
 ## Deployment (Vercel, phone se)
 
@@ -49,6 +50,6 @@ codeagent/
 - localStorage-based hai to different devices/browsers pe data sync nahi hoga — same phone, same browser use karo consistently.
 
 ## Notes / Limitations (jaan bujh kar simple rakha gaya hai)
-- Diff-apply tab hi kaam karega jab LLM ka diya `find` snippet file mein exact match kare — agar model thoda wording badal de to edit skip ho sakta hai (console warning aati hai). Zyada complex edits ke liye LLM khud "content" bhi de sakta hai chhoti files ke liye (system prompt mein wo instruction hai already).
+- Diff-apply tab hi kaam karega jab LLM ka diya `find` snippet file mein exact match kare — agar model thoda wording badal de to edit skip ho sakta hai (console warning aati hai). Zyada complex edits may fail silently.
 - Free OpenRouter models occasionally rate-limited/slow ho sakte hain — is wajah se 3-model fallback chain rakhi hai.
-- No auth, no backend DB — sab kuch is user ke phone browser mein hi rehta hai. Agar chahiye future me multi-device sync, tab Supabase/Postgres add karna padega (abhi scope se bahar rakha gaya hai jaisa spec mein tha).
+- No auth, no backend DB — sab kuch is user ke phone browser mein hi rehta hai. Agar chahiye future me multi-device sync, tab Supabase/Postgres add karna padega (abhi scope se bahar rakha gaya hai).
