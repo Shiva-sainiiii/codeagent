@@ -475,7 +475,6 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
 }
 
 .code-view-textarea {
-  flex: 1;
   width: 100%;
   background: #0a0a0b;
   color: #d4e2f0;
@@ -1165,8 +1164,16 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
 }
 
 /* ========== SYNTAX HIGHLIGHTING (code view) ========== */
+/* .code-view-body is a flex child of .preview-modal (display:flex; flex-direction:column).
+   flex:1 alone can still collapse to content-size in some engines because the default
+   min-height for a flex item is "auto", not 0 — explicitly zeroing it here is what
+   guarantees this box actually claims the remaining modal height instead of shrinking
+   to fit its (possibly still-loading) content. This was the root cause of the code view
+   appearing blank/collapsed: the box had virtually no height, so the absolutely
+   positioned highlight/textarea layers inside it (inset:0) had nothing to fill. */
 .code-view-body {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   position: relative;
   overflow: hidden;
 }
@@ -1197,7 +1204,10 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   caret-color: var(--text);
 }
 .code-view-textarea.raw-visible {
-  position: relative;
+  /* Editing mode: stays absolutely positioned (NOT relative — relative here would drop
+     the inset:0 sizing and let the box collapse to content height again, the same bug
+     as above but for the edit state specifically) so it reliably fills .code-view-body
+     regardless of how much text it currently holds. */
   color: #d4e2f0;
 }
 .code-view-highlight.hidden { display: none; }
@@ -1281,9 +1291,31 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   margin-bottom: 8px;
 }
 .review-file-header svg.icon { color: var(--icon-accent); width: 13px; height: 13px; }
+.review-file-header span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-expand-btn {
+  background: none;
+  border: none;
+  color: var(--icon-accent);
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.review-expand-btn:active {
+  background: var(--bg-elev-3);
+}
 .review-diff-preview {
   max-height: 160px;
   overflow-y: auto;
+  overflow-x: auto;
   background: #0d0e17;
   border-radius: 8px;
   padding: 6px 0;
