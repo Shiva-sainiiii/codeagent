@@ -1201,7 +1201,14 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   font-family: "SF Mono", "JetBrains Mono", monospace;
   font-size: 12.5px;
   line-height: 1.6;
-  pointer-events: none;
+  /* Was pointer-events:none unconditionally — that only made sense back when the (visible,
+     touchable) textarea underneath was the thing the user actually scrolled, with this
+     layer just riding along on top for color. Now that the textarea is hidden in read-only
+     mode (see .code-view-textarea below), nothing was left to receive touch/scroll input
+     at all — this is that "frozen, can't scroll" screen. This box needs to handle its own
+     touch/scroll directly now, so pointer-events is restored to normal here. */
+  pointer-events: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .code-view-highlight pre {
   margin: 0;
@@ -1217,26 +1224,22 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   position: absolute;
   inset: 0;
   color: transparent;
-  /* Was previously only relying on color:transparent to "hide" the textarea in read-only
-     mode — but it kept its own opaque background (#0a0a0b, set above) and sits on top of
-     .code-view-highlight in DOM/paint order (no z-index was declared on either, so the
-     later element — the textarea — wins the default stacking). That opaque background was
-     fully covering the highlighted/colored code underneath, which is why the read-only
-     view appeared completely blank: the actual highlighted text was there, just hidden
-     behind this box. visibility:hidden removes it from paint entirely in read-only mode
-     (still present for layout/scroll-sync purposes since we don't use display:none). */
+  /* Read-only mode: fully removed from both paint AND interaction. display:none (rather
+     than the earlier visibility:hidden) so it can never intercept a touch/scroll gesture
+     meant for .code-view-highlight above — visibility:hidden still occupies space and can
+     still receive certain pointer events in some engines, display:none guarantees neither. */
   background: transparent;
-  visibility: hidden;
+  display: none;
   caret-color: var(--text);
 }
 .code-view-textarea.raw-visible {
   /* Editing mode: stays absolutely positioned (NOT relative — relative here would drop
      the inset:0 sizing and let the box collapse to content height again, the same bug
      as above but for the edit state specifically) so it reliably fills .code-view-body
-     regardless of how much text it currently holds. Explicitly restore visibility and
-     background here since the base .code-view-textarea rule now hides both by default
-     for the read-only state. */
-  visibility: visible;
+     regardless of how much text it currently holds. Explicitly restore display/background
+     here since the base .code-view-textarea rule now hides both by default for the
+     read-only state. */
+  display: block;
   background: #0a0a0b;
   color: #d4e2f0;
 }
