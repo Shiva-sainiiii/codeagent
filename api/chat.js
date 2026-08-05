@@ -237,6 +237,7 @@ async function handleStreamingRequest(res, chatMessages) {
   for (const model of MODEL_CHAIN) {
     for (let attempt = 0; attempt < 2; attempt++) {
       let accumulated = "";
+      let filesPhaseSignaled = false;
       try {
         const streamRes = await callOpenRouterStream(chatMessages, apiKey_GLOBAL, model);
         const reader = streamRes.body.getReader();
@@ -260,14 +261,30 @@ async function handleStreamingRequest(res, chatMessages) {
               const delta = json?.choices?.[0]?.delta?.content;
               if (delta) {
                 accumulated += delta;
-                // Best-effort: try to surface just the "reply" text as it streams in,
-                // so the user sees words appearing instead of a static spinner. This is
-                // a light regex, not full parsing — it only feeds the visual "typing"
-                // effect; the authoritative parse happens once the stream ends.
-                const m = accumulated.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/);
-                if (m) {
-                  const partial = m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+                // Best-effort: try to surface just the "reply" and "reasoning" text as they
+                // stream in, so the user sees words appearing instead of a static spinner.
+                // This is a light regex, not full parsing — it only feeds the visual
+                // "typing" effect; the authoritative parse happens once the stream ends.
+                const replyMatch = accumulated.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/);
+                if (replyMatch) {
+                  const partial = replyMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
                   send("partial", { text: partial });
+                }
+                // Once "reply" has closed (its closing quote reached) and a "files" array
+                // has started opening, the model has moved on to generating file content —
+                // this is the silent, potentially long stretch the user otherwise sees as
+                // nothing happening between the short reply and the final result. A single
+                // one-time signal here is enough to surface that a code-generation phase has
+                // begun, without trying to parse the (much harder to safely partial-parse)
+                // file contents themselves mid-stream.
+                if (!filesPhaseSignaled && /"files"\s*:\s*\[/.test(accumulated)) {
+                  const afterFilesBracket = accumulated.slice(accumulated.indexOf('"files"'));
+                  // only fire once we can see at least the start of a real file entry (a
+                  // path key), so an empty "files": [] doesn't falsely announce work
+                  if (/"path"\s*:/.test(afterFilesBracket)) {
+                    filesPhaseSignaled = true;
+                    send("status", { text: "Generating code..." });
+                  }
                 }
               }
             } catch {
