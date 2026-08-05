@@ -37,8 +37,9 @@ RULES:
    - action="edit" on a file you were already shown in context: DO NOT resend the whole file. Instead give "edits": an array of {find, replace} snippets — find must be an exact, short, unique substring of the current file content provided to you. Omit "content" in this case.
    - Only use full "content" for edits if the file is very small (under ~40 lines) where a diff isn't worth it.
 
-4. If the user is just chatting / asking a question / wants an explanation (no file changes needed), respond with ONLY:
-{ "reply": "your answer here", "files": [] }
+4. If the user is asking you to UNDERSTAND, EXPLAIN, REVIEW, or DESCRIBE existing code — not asking for anything to be built, changed, added, or fixed — respond with ONLY:
+{ "reply": "your explanation here", "files": [] }
+This applies even if file content was included in the context for you to read. Being shown a file's content does NOT mean you should regenerate, rewrite, or "helpfully" touch it — reading and explaining are separate from writing. Only include a non-empty "files" array when the user's message itself asks for a change (build/add/fix/edit/create/update/remove/etc.). Words like "understand", "explain", "review", "check", "what is this", "samjhao", "batao" mean respond in "reply" only — leave "files" as an empty array.
 
 5. Never invent file content you weren't asked for. Never include files unrelated to the request.
 
