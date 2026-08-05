@@ -272,29 +272,61 @@ const PRISM_LANG_MAP = {
   html: "markup", htm: "markup", xml: "markup", svg: "markup",
   css: "css",
   js: "javascript", jsx: "jsx", mjs: "javascript",
-  ts: "typescript", tsx: "tsx",
+  ts: "javascript", tsx: "jsx", // Prism's TS/TSX grammars need extra component files we
+  // don't load below; falling back to the JS/JSX highlighter still colors the vast
+  // majority of TS syntax correctly (types are the only thing that won't get tinted).
   json: "json",
   py: "python",
   md: "markdown",
 };
 
-let prismLoadPromise = null;
-function ensurePrismLoaded() {
-  if (window.Prism) return Promise.resolve();
-  if (prismLoadPromise) return prismLoadPromise;
-  prismLoadPromise = new Promise((resolve) => {
+// Loading each language as its own static <script src> — NOT via Prism's autoloader plugin.
+// The autoloader resolves its component URLs relative to its own script tag by inspecting
+// document.currentScript / getElementsByTagName at load time, which is exactly the kind of
+// runtime path-guessing that breaks silently in some deployment setups (proxied/rewritten
+// asset paths, certain CSP configurations, script injected after the fact rather than
+// present in the initial HTML) — when it breaks, EVERY highlight request just times out
+// with no visible error, which matches "no colors, plain white text" exactly. Loading the
+// handful of languages this app actually needs as plain fixed-URL scripts sidesteps that
+// resolution step entirely — there's no relative path to get wrong.
+const PRISM_VERSION = "1.29.0";
+const PRISM_BASE = `https://cdnjs.cloudflare.com/ajax/libs/prism/${PRISM_VERSION}`;
+const PRISM_LANGUAGE_SCRIPTS = [
+  `${PRISM_BASE}/components/prism-markup.min.js`,
+  `${PRISM_BASE}/components/prism-css.min.js`,
+  `${PRISM_BASE}/components/prism-clike.min.js`, // dependency for javascript
+  `${PRISM_BASE}/components/prism-javascript.min.js`,
+  `${PRISM_BASE}/components/prism-jsx.min.js`,
+  `${PRISM_BASE}/components/prism-json.min.js`,
+  `${PRISM_BASE}/components/prism-python.min.js`,
+  `${PRISM_BASE}/components/prism-markdown.min.js`,
+];
+
+function loadScript(src) {
+  return new Promise((resolve) => {
     const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js";
-    script.onload = () => {
-      const autoloader = document.createElement("script");
-      autoloader.src = "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js";
-      autoloader.onload = resolve;
-      autoloader.onerror = resolve; // degrade gracefully — plain text is still readable
-      document.head.appendChild(autoloader);
-    };
-    script.onerror = resolve;
+    script.src = src;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false); // degrade gracefully — plain text stays as fallback
     document.head.appendChild(script);
   });
+}
+
+let prismLoadPromise = null;
+function ensurePrismLoaded() {
+  if (window.Prism && window.Prism.languages && window.Prism.languages.javascript) {
+    return Promise.resolve();
+  }
+  if (prismLoadPromise) return prismLoadPromise;
+  prismLoadPromise = (async () => {
+    const coreOk = await loadScript(`${PRISM_BASE}/components/prism-core.min.js`);
+    if (!coreOk || !window.Prism) return; // CDN unreachable — plain text fallback stands
+    // clike and markup must land before javascript/jsx (grammar extension order matters),
+    // so load them sequentially rather than all in parallel.
+    for (const src of PRISM_LANGUAGE_SCRIPTS) {
+      await loadScript(src);
+    }
+  })();
   return prismLoadPromise;
 }
 
@@ -319,7 +351,7 @@ async function applySyntaxHighlight(path, content) {
   try {
     await Promise.race([
       ensurePrismLoaded(),
-      new Promise((resolve) => setTimeout(resolve, 4000)),
+      new Promise((resolve) => setTimeout(resolve, 6000)),
     ]);
   } catch (e) {
     return; // plain text already shown
@@ -333,16 +365,8 @@ async function applySyntaxHighlight(path, content) {
   if ($("codeViewTextarea").dataset.path !== path) return;
 
   try {
-    if (!window.Prism.languages[lang] && window.Prism.plugins?.autoloader) {
-      await Promise.race([
-        new Promise((resolve) => {
-          window.Prism.plugins.autoloader.loadLanguages([lang], resolve, resolve);
-        }),
-        new Promise((resolve) => setTimeout(resolve, 4000)),
-      ]);
-    }
-    if ($("codeViewTextarea").dataset.path !== path) return; // stale by now — skip
     const grammar = window.Prism.languages[lang] || window.Prism.languages.markup;
+    if (!grammar) return; // language script failed to load — plain text stays
     const highlighted = window.Prism.highlight(content, grammar, lang);
     highlightEl.innerHTML = `<pre class="language-${lang}"><code>${highlighted}</code></pre>`;
   } catch (e) {
