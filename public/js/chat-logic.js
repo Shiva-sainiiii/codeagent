@@ -536,8 +536,18 @@ async function runLlmRequest(text) {
     const data = finalData;
 
     const replyText = data.reply || "…";
-    const filesToApply = data.files || [];
     const reasoningText = (data.reasoning || "").trim();
+
+    // Safety net against the model misreading a read-only question as an edit request.
+    // The system prompt tells it explicitly not to touch files for "understand/explain/
+    // review" type messages, but free models occasionally ignore that and generate files
+    // anyway once file content is in context. If the user's own message has no verb that
+    // implies a change (build/add/fix/edit/etc.) but DOES look like an inspection request,
+    // discard any files the model sent back — the person asked to understand the code, not
+    // to have it silently rewritten.
+    const userAskedForChange = /\b(fix|edit|update|change|add|remove|delete|refactor|debug|improve|build|create|banao|bana|karo|kar do|isme|ismein|iska|isko)\b/i.test(text);
+    const userAskedToInspect = /\b(understand|explain|review|check|what is|kya hai|samjhao|samajh|batao|dekho|dekh)\b/i.test(text);
+    const filesToApply = (userAskedToInspect && !userAskedForChange) ? [] : (data.files || []);
 
     // Remove the temporary streaming bubble now — the real, fully-formed bot message
     // (with footer, file chips, etc.) replaces it below via the normal appendMsgToDom path.
