@@ -1217,13 +1217,27 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   position: absolute;
   inset: 0;
   color: transparent;
+  /* Was previously only relying on color:transparent to "hide" the textarea in read-only
+     mode — but it kept its own opaque background (#0a0a0b, set above) and sits on top of
+     .code-view-highlight in DOM/paint order (no z-index was declared on either, so the
+     later element — the textarea — wins the default stacking). That opaque background was
+     fully covering the highlighted/colored code underneath, which is why the read-only
+     view appeared completely blank: the actual highlighted text was there, just hidden
+     behind this box. visibility:hidden removes it from paint entirely in read-only mode
+     (still present for layout/scroll-sync purposes since we don't use display:none). */
+  background: transparent;
+  visibility: hidden;
   caret-color: var(--text);
 }
 .code-view-textarea.raw-visible {
   /* Editing mode: stays absolutely positioned (NOT relative — relative here would drop
      the inset:0 sizing and let the box collapse to content height again, the same bug
      as above but for the edit state specifically) so it reliably fills .code-view-body
-     regardless of how much text it currently holds. */
+     regardless of how much text it currently holds. Explicitly restore visibility and
+     background here since the base .code-view-textarea rule now hides both by default
+     for the read-only state. */
+  visibility: visible;
+  background: #0a0a0b;
   color: #d4e2f0;
 }
 .code-view-highlight.hidden { display: none; }
