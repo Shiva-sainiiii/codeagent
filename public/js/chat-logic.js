@@ -95,6 +95,15 @@ function messageNeedsFileContext(text) {
   const paths = Object.keys(currentFiles);
   if (!paths.length) return false;
 
+  // Small project (1-2 files): keyword-guessing which message "needs" the file is a fragile
+  // game to keep winning — any new phrasing ("understand this", "explain karo", "what does
+  // this do") that isn't on the list silently breaks it, which is exactly what happened with
+  // "Now understand again" not matching any keyword below. For a small project the file(s)
+  // are cheap to include (that's the whole reason the 18k-char cap exists), so below this
+  // size just always send them — correctness beats the marginal token savings here.
+  const totalFileChars = paths.reduce((sum, p) => sum + (currentFiles[p]?.length || 0), 0);
+  if (paths.length <= 2 && totalFileChars < 6000) return true;
+
   // Very short casual messages ("hi", "thanks", "ok", "kya haal hai") shouldn't drag in
   // file content just because they happen to contain a common word like "kya" — only
   // apply the broader inspection-keyword check below to messages that look like they're
@@ -108,11 +117,10 @@ function messageNeedsFileContext(text) {
   // action verbs that imply modifying/looking at existing code
   if (/\b(fix|edit|update|change|add|remove|delete|refactor|debug|improve|isme|ismein|iska|isko|ye|yeh)\b/.test(t)) return true;
   // read-only / inspection requests — these don't modify anything but still need the
-  // actual file content to answer meaningfully. Missing this was the cause of "check
-  // bugs" or "review my code" getting a blind "please share your file" reply even
-  // though the file was sitting right there in the project the whole time. Gated behind
-  // wordCount >= 2 so a bare "kya" or "how" in a casual one-word message doesn't trigger it.
-  if (wordCount >= 2 && /\b(check|review|explain|analyze|analyse|samajh|dekho|dekh|batao|bug|error|issue|problem|kaise|kyu|kyun)\b/.test(t)) return true;
+  // actual file content to answer meaningfully. Kept as a fallback for larger multi-file
+  // projects (where sending everything by default gets expensive); small projects are
+  // already covered unconditionally above regardless of phrasing.
+  if (wordCount >= 2 && /\b(check|review|explain|analyze|analyse|understand|samajh|dekho|dekh|batao|bug|error|issue|problem|kaise|kyu|kyun)\b/.test(t)) return true;
   // very first message in a project that already has files — safe default to include
   if (currentChat.filter((m) => m.role === "user").length <= 1) return true;
   return false;
@@ -491,6 +499,21 @@ async function runLlmRequest(text) {
           partialTextSoFar = payload.text || "";
           const bubble = ensureStreamingBubble();
           bubble.contentEl.innerHTML = renderMarkdown(partialTextSoFar);
+          $("chatLog").scrollTop = $("chatLog").scrollHeight;
+        } else if (eventType === "status") {
+          // Mid-stream progress signal (e.g. "Generating code...") — fires once the model
+          // has finished the short reply text and moved on to writing file content, which
+          // is otherwise a silent stretch with no visible feedback until the whole response
+          // finishes. Shown as a small trailing note under the streaming bubble rather than
+          // replacing it, so the reply text that already streamed in stays visible.
+          const bubble = ensureStreamingBubble();
+          let statusNote = bubble.div.querySelector(".streaming-status-note");
+          if (!statusNote) {
+            statusNote = document.createElement("div");
+            statusNote.className = "streaming-status-note";
+            bubble.div.appendChild(statusNote);
+          }
+          statusNote.innerHTML = `<span class="status-spinner"></span><span>${escapeHtml(payload.text || "")}</span>`;
           $("chatLog").scrollTop = $("chatLog").scrollHeight;
         } else if (eventType === "final") {
           finalData = payload;
