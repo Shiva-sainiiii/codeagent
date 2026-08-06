@@ -1281,6 +1281,17 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   background: transparent;
   color: transparent;
 }
+/* The textarea's own text is transparent (the colored copy underneath is what's actually
+   read), but a native text selection paints ON the textarea itself — with transparent text
+   color, a selected range showed only an empty blue selection band with no visible letters
+   inside it, which is what looked "invisible"/ghosted when selecting or cutting text. This
+   overrides text color specifically within an active selection so the selected characters
+   are legible against the selection highlight, without affecting the unselected transparent
+   text elsewhere (which still shows the colored layer underneath as normal). */
+.code-view-textarea.raw-visible::selection {
+  color: #0a0a0b;
+  background: var(--icon-accent);
+}
 .code-view-highlight.hidden { display: none; }
 
 /* Minimal Prism token colors, tuned to this app's palette rather than importing a full
