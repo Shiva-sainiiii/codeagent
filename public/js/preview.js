@@ -410,16 +410,39 @@ async function applySyntaxHighlight(path, content) {
   const highlightEl = $("codeViewHighlight");
   if (!highlightEl) return;
 
+  const ext = (path.split(".").pop() || "").toLowerCase();
+  const lang = PRISM_LANG_MAP[ext];
+  const prismReady = window.Prism && window.Prism.languages && (!lang || window.Prism.languages[lang] || window.Prism.languages.markup);
+
+  // If Prism is already loaded (the common case after the very first call — see the
+  // eager warm-up in app.js's init), paint the highlighted version directly and skip the
+  // plain-text intermediate step below entirely. Without this, every single keystroke
+  // while editing repainted plain text first and only replaced it with colors a moment
+  // later once the (here, near-instant but still async) Prism path resolved — on fast
+  // typing that flicker made it look like syntax colors simply weren't updating, since
+  // the next keystroke's plain-text repaint would land before the previous one's colored
+  // result did.
+  if (prismReady && lang) {
+    try {
+      const grammar = window.Prism.languages[lang] || window.Prism.languages.markup;
+      const highlighted = window.Prism.highlight(content, grammar, lang);
+      highlightEl.innerHTML = `<pre class="language-${lang}"><code>${highlighted}</code></pre>`;
+      return;
+    } catch (e) {
+      // fall through to the plain-text path below
+    }
+  }
+
   // Show plain (escaped) text IMMEDIATELY — never leave the box blank while we wait on
   // the CDN. This was the actual cause of "code view opens blank": Prism loads async,
   // and on a slow/flaky connection (or if the CDN request fails entirely) the highlight
   // box's innerHTML was never set at all, so nothing ever appeared. Painting plain text
   // first means the user always sees the code instantly; highlighting is a progressive
-  // upgrade on top of that, not a blocking requirement.
+  // upgrade on top of that, not a blocking requirement. This path only runs now on the
+  // first call for a language (before Prism/that grammar has finished loading) or for
+  // unsupported languages, rather than on every single keystroke.
   highlightEl.innerHTML = `<pre><code>${escapeHtml(content)}</code></pre>`;
 
-  const ext = (path.split(".").pop() || "").toLowerCase();
-  const lang = PRISM_LANG_MAP[ext];
   if (!lang) return; // unsupported language — plain text already shown, nothing more to do
 
   // Guard the CDN load with a timeout so a hung/slow request can't leave us stuck —
