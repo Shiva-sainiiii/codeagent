@@ -154,15 +154,16 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
 .project-item-info b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
 .project-item-info span { font-size: 10px; color: var(--text-dim); }
 .mini-btn {
-  background: none; border: none; color: var(--icon-accent); font-size: 15px; padding: 5px 6px;
-  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg-elev-3); border: none; color: var(--icon-accent); font-size: 15px;
+  width: 32px; height: 32px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
 .mini-btn.danger { color: var(--danger); }
 
-.file-item { flex-direction: column; align-items: stretch; gap: 6px; cursor: pointer; }
-.file-item-top { display: flex; justify-content: space-between; align-items: center; }
-.file-item-top b { font-family: "SF Mono", "JetBrains Mono", monospace; font-size: 12px; word-break: break-all; font-weight: 500; }
-.file-item-actions { display: flex; gap: 4px; }
+.file-item { flex-direction: column; align-items: stretch; gap: 8px; cursor: pointer; }
+.file-item-top { display: flex; flex-direction: column; gap: 8px; }
+.file-item-top b { font-family: "SF Mono", "JetBrains Mono", monospace; font-size: 12.5px; word-break: break-all; font-weight: 500; }
+.file-item-actions { display: flex; gap: 4px; flex-wrap: wrap; }
 
 /* FULL-SCREEN LIVE PREVIEW */
 .preview-modal {
@@ -1190,6 +1191,35 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
 .code-view-body {
   flex: 1 1 0;
   min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Line-number gutter — a separate column, not part of the scrollable code text itself, so
+   long lines can scroll horizontally without dragging the numbers along with them. Synced
+   vertically to the code's scroll position via JS (see syncGutterScroll in preview.js). */
+.code-view-gutter {
+  flex-shrink: 0;
+  width: 40px;
+  overflow: hidden;
+  padding: 14px 0;
+  background: #0a0a0b;
+  border-right: 1px solid var(--border);
+  font-family: "SF Mono", "JetBrains Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-faint);
+  text-align: right;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.code-view-gutter div {
+  padding-right: 10px;
+}
+
+.code-view-scroll-area {
+  flex: 1;
+  min-width: 0;
   position: relative;
   overflow: hidden;
 }
@@ -1213,12 +1243,16 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
 .code-view-highlight pre {
   margin: 0;
   background: none !important;
+  /* No wrap — matching the gutter's one-number-per-line assumption. Long lines scroll
+     horizontally instead of wrapping, which is what keeps a gutter number meaningfully
+     lined up with its actual source line (a wrapped line would otherwise span multiple
+     visual rows while the gutter still only shows one number for it). */
+  white-space: pre;
 }
 .code-view-highlight code {
   background: none !important;
   font-family: inherit;
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: pre;
 }
 .code-view-textarea {
   position: absolute;
@@ -1231,17 +1265,21 @@ svg.icon { width: 1em; height: 1em; flex-shrink: 0; }
   background: transparent;
   display: none;
   caret-color: var(--text);
+  white-space: pre;
+  overflow: auto;
 }
 .code-view-textarea.raw-visible {
-  /* Editing mode: stays absolutely positioned (NOT relative — relative here would drop
-     the inset:0 sizing and let the box collapse to content height again, the same bug
-     as above but for the edit state specifically) so it reliably fills .code-view-body
-     regardless of how much text it currently holds. Explicitly restore display/background
-     here since the base .code-view-textarea rule now hides both by default for the
-     read-only state. */
+  /* Editing mode: the textarea becomes a transparent overlay ON TOP of the (still-visible,
+     still-updating) highlight layer — same "invisible textarea over colored text" trick
+     used for the read-only view, except here the textarea is genuinely interactive
+     (readOnly=false) so typing/selection/caret all work normally while what the user sees
+     underneath is syntax-colored text that re-highlights on every keystroke (see the
+     "input" listener wired up in setCodeViewEditing). Stays absolutely positioned (NOT
+     relative — relative here would drop the inset:0 sizing and let the box collapse to
+     content height again, the same bug as above but for the edit state specifically). */
   display: block;
-  background: #0a0a0b;
-  color: #d4e2f0;
+  background: transparent;
+  color: transparent;
 }
 .code-view-highlight.hidden { display: none; }
 

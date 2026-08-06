@@ -859,6 +859,13 @@ $("planConfirmBtn").addEventListener("click", confirmPlanAndExecute);
   initPullToRefresh();
   setReviewModeEnabled(isReviewModeEnabled()); // sync toggle visual state with stored preference
 
+  // Warm up Prism in the background on app load, not the first time a code/diff view is
+  // opened — review cards can appear right after the very first AI response, and without
+  // this they'd render in plain text (Prism not loaded yet) even though the code view
+  // itself would show colors moments later. A few seconds' head start during otherwise
+  // idle load time means Prism is very likely ready before anyone actually taps to view.
+  ensurePrismLoaded();
+
   const projects = listProjects();
   const ids = Object.keys(projects);
   if (currentProjectId && projects[currentProjectId]) {
@@ -907,10 +914,11 @@ function renderPendingReviewCard(pendingFiles) {
       after = f.content;
     }
     const diffLines = computeLineDiff(before, after);
+    const lang = langForPath(f.path);
     const diffHtml = diffLines.map((line) => {
       const cls = line.type === "added" ? "diff-added" : line.type === "removed" ? "diff-removed" : "diff-same";
       const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
-      return `<div class="diff-line ${cls}"><span class="diff-prefix">${prefix}</span><span class="diff-text">${escapeHtml(line.text)}</span></div>`;
+      return `<div class="diff-line ${cls}"><span class="diff-prefix">${prefix}</span><span class="diff-text">${highlightLineForDiff(line.text, lang)}</span></div>`;
     }).join("");
 
     return `
