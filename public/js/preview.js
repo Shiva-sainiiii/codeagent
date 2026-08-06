@@ -165,15 +165,36 @@ window.addEventListener("message", (e) => {
 });
 
 // ---------- DIFF VIEW ----------
+// Highlights a single line of code using Prism if it's already loaded (never triggers a
+// fresh CDN load itself — that only happens via applySyntaxHighlight in the code view, so
+// diffs opened before that has run once just show plain escaped text, which is a harmless
+// degrade). Used by both the review-card diff preview and the full-screen diff modal so a
+// pending change is colored the same way the file itself would be.
+function highlightLineForDiff(text, lang) {
+  if (window.Prism && window.Prism.languages && lang && window.Prism.languages[lang]) {
+    try {
+      return window.Prism.highlight(text, window.Prism.languages[lang], lang);
+    } catch (e) {
+      // fall through to plain escaped text below
+    }
+  }
+  return escapeHtml(text);
+}
+function langForPath(path) {
+  const ext = (path.split(".").pop() || "").toLowerCase();
+  return PRISM_LANG_MAP[ext];
+}
+
 // Shared renderer so both the history-based diff (undo/redo comparisons) and a pending
 // AI-review diff (before it's even applied) go through the exact same rendering path —
 // same styling, same full-screen modal, no duplicated markup logic between the two.
 function renderDiffModal(path, before, after) {
   const diffLines = computeLineDiff(before, after);
+  const lang = langForPath(path);
   const html = diffLines.map((line) => {
     const cls = line.type === "added" ? "diff-added" : line.type === "removed" ? "diff-removed" : "diff-same";
     const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
-    return `<div class="diff-line ${cls}"><span class="diff-prefix">${prefix}</span><span class="diff-text">${escapeHtml(line.text)}</span></div>`;
+    return `<div class="diff-line ${cls}"><span class="diff-prefix">${prefix}</span><span class="diff-text">${highlightLineForDiff(line.text, lang)}</span></div>`;
   }).join("");
 
   $("diffFileName").textContent = path;
@@ -219,6 +240,8 @@ function openCodeViewModal(path) {
   textarea.dataset.path = path;
   setCodeViewEditing(false);
   applySyntaxHighlight(path, content);
+  renderCodeViewGutter(content);
+  setupCodeViewScrollSync();
   const modal = $("codeViewModal");
   modal.classList.remove("hidden");
   requestAnimationFrame(() => modal.classList.add("show"));
@@ -236,10 +259,22 @@ function setCodeViewEditing(editing) {
   $("codeViewSaveBtn").classList.toggle("hidden", !editing);
   $("codeViewCancelEditBtn").classList.toggle("hidden", !editing);
   textarea.classList.toggle("editing", editing);
-  // While editing, show the raw textarea (caret needs to be visible/editable); while
-  // read-only, show the syntax-highlighted overlay instead for easier reading.
+  // The highlight layer stays visible in BOTH modes now — in editing mode the textarea
+  // becomes a transparent, interactive overlay on top of it (see .raw-visible in CSS),
+  // with an "input" listener (wired below) keeping the colors in sync as the user types.
   textarea.classList.toggle("raw-visible", editing);
-  if (highlightEl) highlightEl.classList.toggle("hidden", editing);
+  if (editing) {
+    textarea.focus();
+    if (!textarea.dataset.highlightSyncBound) {
+      textarea.dataset.highlightSyncBound = "1";
+      textarea.addEventListener("input", () => {
+        applySyntaxHighlight(textarea.dataset.path, textarea.value);
+        renderCodeViewGutter(textarea.value);
+      });
+    }
+  }
+  // Line numbers should track whichever view is actually active and scrollable right now.
+  syncCodeViewGutterScroll();
 }
 function saveCodeViewEdit() {
   const textarea = $("codeViewTextarea");
@@ -255,13 +290,54 @@ function saveCodeViewEdit() {
   }
   textarea.dataset.originalContent = after;
   applySyntaxHighlight(path, after);
+  renderCodeViewGutter(after);
   setCodeViewEditing(false);
 }
 function cancelCodeViewEdit() {
   const textarea = $("codeViewTextarea");
   textarea.value = textarea.dataset.originalContent;
   applySyntaxHighlight(textarea.dataset.path, textarea.value);
+  renderCodeViewGutter(textarea.value);
   setCodeViewEditing(false);
+}
+
+// ---------- LINE NUMBER GUTTER ----------
+// Renders one number per line into the fixed-width gutter column. Kept as a plain div per
+// line (matching line-height with the code panes) rather than a single pre-formatted block,
+// so it's simple to keep vertically in sync via scrollTop mirroring regardless of which of
+// the two overlapping code panes (highlight vs textarea) is the one currently scrolling.
+function renderCodeViewGutter(content) {
+  const gutter = $("codeViewGutter");
+  if (!gutter) return;
+  const lineCount = content.split("\n").length;
+  let html = "";
+  for (let i = 1; i <= lineCount; i++) html += `<div>${i}</div>`;
+  gutter.innerHTML = html;
+}
+
+// Whichever pane is actually visible/interactive right now (highlight in read-only mode,
+// textarea in editing mode) drives the gutter's scroll position — mirrored on every scroll
+// event from that pane, plus once immediately whenever the mode switches (view toggling
+// alone doesn't fire a scroll event, so the gutter would otherwise be stale until the next
+// manual scroll).
+let codeViewScrollSyncSetup = false;
+function setupCodeViewScrollSync() {
+  if (codeViewScrollSyncSetup) return; // listeners only need to be attached once per page load
+  codeViewScrollSyncSetup = true;
+  const highlightEl = $("codeViewHighlight");
+  const textarea = $("codeViewTextarea");
+  const gutter = $("codeViewGutter");
+  if (!highlightEl || !textarea || !gutter) return;
+  highlightEl.addEventListener("scroll", () => { gutter.scrollTop = highlightEl.scrollTop; });
+  textarea.addEventListener("scroll", () => { gutter.scrollTop = textarea.scrollTop; });
+}
+function syncCodeViewGutterScroll() {
+  const gutter = $("codeViewGutter");
+  if (!gutter) return;
+  const textarea = $("codeViewTextarea");
+  const highlightEl = $("codeViewHighlight");
+  const active = textarea && textarea.classList.contains("raw-visible") ? textarea : highlightEl;
+  if (active) gutter.scrollTop = active.scrollTop;
 }
 
 // ---------- SYNTAX HIGHLIGHTING (Prism.js, loaded from CDN) ----------
